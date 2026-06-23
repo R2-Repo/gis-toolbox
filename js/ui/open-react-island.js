@@ -1,5 +1,24 @@
 import { showModal } from './modals.js';
 
+/** Vite-bundled mount helpers — runtime .jsx URLs are not shipped in dist/. */
+const mountModuleLoaders = import.meta.glob('../../react/**/mount*.jsx');
+
+export function normalizeMountSuffix(mountPath) {
+    return mountPath.replace(/^(\.\.\/)+/, '');
+}
+
+export function resolveMountLoader(mountPath) {
+    const suffix = normalizeMountSuffix(mountPath);
+    const entry = Object.entries(mountModuleLoaders).find(([key]) => {
+        const normalizedKey = normalizeMountSuffix(key);
+        return normalizedKey === suffix || key.endsWith(suffix);
+    });
+    if (!entry) {
+        throw new Error(`openReactIsland: mount module not found for ${mountPath}`);
+    }
+    return entry[1];
+}
+
 function watchOverlayUnmount(overlay, onUnmount) {
     const observer = new MutationObserver(() => {
         if (!document.body.contains(overlay)) {
@@ -18,7 +37,7 @@ function watchOverlayUnmount(overlay, onUnmount) {
  * @param {object} options
  * @param {string} options.title
  * @param {string} [options.width]
- * @param {string} options.mountPath - dynamic import path
+ * @param {string} options.mountPath - path suffix under react/ (resolved via import.meta.glob)
  * @param {string} [options.mountExport] - named export to call
  * @param {(close: () => void) => object | Promise<object>} options.getProps
  */
@@ -32,7 +51,7 @@ export async function openReactIsland({ title, width, mountPath, mountExport, ge
             const root = overlay.querySelector(`#${rootId}`);
             if (!root) return;
 
-            const mod = await import(/* @vite-ignore */ mountPath);
+            const mod = await resolveMountLoader(mountPath)();
             const mountFn = mountExport
                 ? mod[mountExport]
                 : Object.values(mod).find((fn) => typeof fn === 'function' && fn.name.startsWith('mount'));
