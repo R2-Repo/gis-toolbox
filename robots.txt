@@ -1,9 +1,0 @@
-# GIS Toolbox — https://gis-toolbox.com
-User-agent: *
-Disallow:
-
-# Sitemap
-Sitemap: https://gis-toolbox.com/sitemap.xml
-
-# Disallow non-content paths
-Disallow: /icons/
