@@ -1,0 +1,134 @@
+/**
+ * Read-only layer summary rows for the Data Preview panel.
+ */
+import { getLayerFeatureCount, isSpatialLayer, isWorkspaceLayer } from './data-model.js';
+import { getLayerCrs, isLayerDisplayReady, layerCrsWarning } from '../crs/layer-crs.js';
+import { crsLabel } from '../crs/registry.js';
+import { formatBytes } from '../import/import-preflight.js';
+
+const FORMAT_LABELS = {
+    geojson: 'GeoJSON',
+    json: 'JSON',
+    csv: 'CSV',
+    tsv: 'TSV',
+    txt: 'Text',
+    xlsx: 'Excel',
+    xls: 'Excel',
+    kml: 'KML',
+    kmz: 'KMZ',
+    zip: 'Shapefile (ZIP)',
+    xml: 'XML',
+    workflow: 'Workflow',
+    draw: 'Draw',
+    merge: 'Merge',
+    'toolbox-kit': 'Toolbox Kit',
+    photo: 'Photo Mapper',
+    unknown: 'Unknown'
+};
+
+function humanizeFormat(format) {
+    if (!format) return '—';
+    const key = String(format).toLowerCase();
+    return FORMAT_LABELS[key] || format;
+}
+
+function formatCreated(iso) {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleString();
+}
+
+function formatSource(layer) {
+    const file = layer.source?.file;
+    const format = humanizeFormat(layer.source?.format);
+    if (file && format && format !== '—') return `${file} (${format})`;
+    if (file) return file;
+    if (format && format !== '—') return format;
+    return '—';
+}
+
+/**
+ * @param {object|null|undefined} layer
+ * @returns {{ id: string, label: string, value: string, warning?: string }[]}
+ */
+export function getLayerInfoSummary(layer) {
+    if (!layer) return [];
+
+    const rows = [];
+    const spatial = isSpatialLayer(layer);
+    const count = getLayerFeatureCount(layer);
+    const fieldCount = layer.schema?.fields?.length ?? 0;
+
+    rows.push({
+        id: 'type',
+        label: 'Type',
+        value: spatial ? 'Spatial layer' : 'Table'
+    });
+
+    rows.push({
+        id: 'records',
+        label: spatial ? 'Features' : 'Rows',
+        value: count.toLocaleString()
+    });
+
+    rows.push({
+        id: 'fields',
+        label: 'Fields',
+        value: String(fieldCount)
+    });
+
+    if (spatial && layer.schema?.geometryType) {
+        rows.push({
+            id: 'geometry',
+            label: 'Geometry',
+            value: layer.schema.geometryType
+        });
+    }
+
+    if (spatial) {
+        const crs = getLayerCrs(layer);
+        const crsWarning = layerCrsWarning(layer);
+        rows.push({
+            id: 'crs',
+            label: 'CRS',
+            value: crsLabel(crs),
+            warning: !isLayerDisplayReady(layer) && crsWarning ? crsWarning : undefined
+        });
+    }
+
+    rows.push({
+        id: 'source',
+        label: 'Source',
+        value: formatSource(layer)
+    });
+
+    if (layer.source?.fileSize > 0) {
+        rows.push({
+            id: 'sourceSize',
+            label: 'Source size',
+            value: formatBytes(layer.source.fileSize)
+        });
+    }
+
+    const created = formatCreated(layer.created);
+    if (created) {
+        rows.push({
+            id: 'added',
+            label: 'Added',
+            value: created
+        });
+    }
+
+    if (spatial) {
+        rows.push({
+            id: 'storage',
+            label: 'Storage',
+            value: isWorkspaceLayer(layer) ? 'Workspace (IndexedDB)' : 'In memory'
+        });
+    }
+
+    return rows;
+}
+
+export default { getLayerInfoSummary };

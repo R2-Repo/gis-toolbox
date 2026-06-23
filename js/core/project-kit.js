@@ -1,0 +1,409 @@
+/**
+ * Toolbox Kit — branded portable project export/import (.gis-toolbox)
+ */
+import { serializeLayerForPersistence } from './session-store.js';
+import { AppError, ErrorCategory } from './error-handler.js';
+
+export const PROJECT_KIT_FORMAT = 'gis-toolbox-kit';
+export const PROJECT_KIT_FORMAT_VERSION = 1;
+export const PROJECT_KIT_EXTENSION = '.gis-toolbox';
+export const PROJECT_KIT_LEGACY_EXTENSION = '.gtbx';
+export const PROJECT_KIT_DISPLAY_NAME = 'Toolbox Kit';
+export const PROJECT_KIT_SECTIONS = ['layers', 'map', 'workflow', 'preferences'];
+export const WORKFLOW_NODE_CACHE_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * @param {File|{ name?: string }} file
+ */
+export function isProjectKitFile(file) {
+    const name = (file?.name || '').toLowerCase();
+    return name.endsWith(PROJECT_KIT_EXTENSION) || name.endsWith(PROJECT_KIT_LEGACY_EXTENSION);
+}
+
+/**
+ * @param {Date} [date]
+ * @returns {string} e.g. 6-21-26
+ */
+export function formatProjectKitDate(date = new Date()) {
+    return `${date.getMonth() + 1}-${date.getDate()}-${String(date.getFullYear()).slice(-2)}`;
+}
+
+/**
+ * @param {string} name
+ */
+export function sanitizeProjectKitBaseName(name) {
+    return String(name || 'toolbox-project')
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'toolbox-project';
+}
+
+/**
+ * @param {string} projectName
+ * @param {Date} [date]
+ * @returns {string} e.g. Highway-88(6-21-26).gis-toolbox
+ */
+export function buildProjectKitDownloadName(projectName, date = new Date()) {
+    let base = sanitizeProjectKitBaseName(projectName);
+    base = base.replace(/\.(gtbx|gis-toolbox)$/i, '');
+    base = base.replace(/\(\d{1,2}-\d{1,2}-\d{2}\)$/i, '');
+    return `${base}(${formatProjectKitDate(date)})${PROJECT_KIT_EXTENSION}`;
+}
+
+/** @deprecated use buildProjectKitDownloadName */
+export function sanitizeProjectKitFilename(name) {
+    return buildProjectKitDownloadName(name);
+}
+
+/**
+ * @param {object} manifest
+ * @returns {{ ok: true, manifest: object } | { ok: false, error: string }}
+ */
+export function validateProjectKitManifest(manifest) {
+    if (!manifest || typeof manifest !== 'object') {
+        return { ok: false, error: 'Missing manifest.json in Toolbox Kit file.' };
+    }
+    if (manifest.format !== PROJECT_KIT_FORMAT) {
+        return { ok: false, error: `Unrecognised Toolbox Kit format: ${manifest.format || 'unknown'}` };
+    }
+    if (typeof manifest.formatVersion !== 'number' || manifest.formatVersion > PROJECT_KIT_FORMAT_VERSION) {
+        return { ok: false, error: `Unsupported Toolbox Kit version (${manifest.formatVersion}). Update GIS Toolbox to import this file.` };
+    }
+    return { ok: true, manifest };
+}
+
+/**
+ * @param {string} id
+ * @param {Set<string>} existingIds
+ */
+export function resolveLayerIdConflict(id, existingIds) {
+    if (!existingIds.has(id)) return id;
+    let n = 2;
+    while (existingIds.has(`${id}-${n}`)) n += 1;
+    return `${id}-${n}`;
+}
+
+/**
+ * @param {{
+ *   sections: string[],
+ *   layers?: object[],
+ *   activeLayerId?: string|null,
+ *   layerStyles?: object|null,
+ *   map?: object|null,
+ *   workflow?: { pipeline: object, nodeCache?: object }|null,
+ *   preferences?: object|null,
+ *   exportWorkspaceLayerBundle?: (layerId: string) => Promise<object|null>,
+ *   projectName?: string
+ * }} options
+ */
+export async function buildProjectKitSnapshot(options) {
+    const sections = normalizeSections(options.sections);
+    const snapshot = {
+        manifest: buildManifest({ sections, layers: options.layers, projectName: options.projectName }),
+        layers: null,
+        map: null,
+        workflow: null,
+        preferences: null
+    };
+
+    if (sections.includes('layers') && Array.isArray(options.layers)) {
+        snapshot.layers = await gatherLayerSection(
+            options.layers,
+            options.activeLayerId,
+            options.layerStyles,
+            options.exportWorkspaceLayerBundle
+        );
+    }
+
+    if (sections.includes('map') && options.map) {
+        snapshot.map = { ...options.map };
+    }
+
+    if (sections.includes('workflow') && options.workflow?.pipeline) {
+        snapshot.workflow = {
+            pipeline: buildWorkflowConfig(options.workflow.pipeline, options.workflow.nodeCache)
+        };
+    }
+
+    if (sections.includes('preferences') && options.preferences) {
+        snapshot.preferences = { ...options.preferences };
+    }
+
+    return snapshot;
+}
+
+function buildManifest({ sections, layers, projectName }) {
+    return {
+        format: PROJECT_KIT_FORMAT,
+        formatVersion: PROJECT_KIT_FORMAT_VERSION,
+        displayName: PROJECT_KIT_DISPLAY_NAME,
+        exportedAt: new Date().toISOString(),
+        sections,
+        layerCount: Array.isArray(layers) ? layers.length : 0,
+        projectName: projectName || null,
+        appVersion: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null
+    };
+}
+
+function buildWorkflowConfig(pipeline, nodeCache = {}) {
+    const cache = {};
+    for (const [nodeId, data] of Object.entries(nodeCache || {})) {
+        const size = JSON.stringify(data).length;
+        if (size <= WORKFLOW_NODE_CACHE_MAX_BYTES) cache[nodeId] = data;
+    }
+    return {
+        _format: 'gis-toolbox-workflow',
+        version: 1,
+        pipeline,
+        nodeCache: cache
+    };
+}
+
+async function gatherLayerSection(layers, activeLayerId, layerStyles, exportWorkspaceLayerBundle) {
+    const index = [];
+    const spatial = {};
+    const tables = {};
+    const workspace = {};
+
+    for (const layer of layers) {
+        index.push(serializeLayerForPersistence(layer));
+        if (layer.type === 'spatial' && layer.geojson) {
+            spatial[layer.id] = layer.geojson;
+        } else if (layer.type === 'table' && layer.rows) {
+            tables[layer.id] = layer.rows;
+        } else if ((layer.type === 'spatial-chunked' || layer.storage === 'workspace') && exportWorkspaceLayerBundle) {
+            const wsId = layer.workspaceLayerId || layer.id;
+            const bundle = await exportWorkspaceLayerBundle(wsId);
+            if (bundle) workspace[layer.id] = bundle;
+        }
+    }
+
+    return {
+        index,
+        activeLayerId: activeLayerId || null,
+        styles: layerStyles && typeof layerStyles === 'object' ? layerStyles : {},
+        spatial,
+        tables,
+        workspace
+    };
+}
+
+function normalizeSections(sections) {
+    const set = new Set(Array.isArray(sections) ? sections : PROJECT_KIT_SECTIONS);
+    return PROJECT_KIT_SECTIONS.filter((key) => set.has(key));
+}
+
+/**
+ * @param {object} snapshot
+ * @param {object} JSZipLib
+ * @param {{ updateProgress?: (n:number,s?:string)=>void }} [task]
+ */
+export async function packProjectKit(snapshot, JSZipLib, task) {
+    if (!JSZipLib) throw new AppError('JSZip library not loaded', ErrorCategory.PARSE_FAILED);
+    const zip = new JSZipLib();
+    task?.updateProgress?.(5, 'Writing manifest…');
+    zip.file('manifest.json', JSON.stringify(snapshot.manifest, null, 2));
+
+    if (snapshot.layers) {
+        task?.updateProgress?.(15, 'Packing layers…');
+        zip.file('layers/index.json', JSON.stringify({
+            index: snapshot.layers.index,
+            activeLayerId: snapshot.layers.activeLayerId
+        }, null, 2));
+        zip.file('layers/styles.json', JSON.stringify(snapshot.layers.styles || {}, null, 2));
+
+        for (const [id, geojson] of Object.entries(snapshot.layers.spatial || {})) {
+            zip.file(`layers/spatial/${id}.geojson`, JSON.stringify(geojson));
+        }
+        for (const [id, rows] of Object.entries(snapshot.layers.tables || {})) {
+            zip.file(`layers/tables/${id}.json`, JSON.stringify(rows));
+        }
+        for (const [id, bundle] of Object.entries(snapshot.layers.workspace || {})) {
+            zip.file(`layers/workspace/${id}/meta.json`, JSON.stringify(bundle.meta, null, 2));
+            for (const chunk of bundle.chunks || []) {
+                zip.file(`layers/workspace/${id}/chunks/${chunk.id}.json`, JSON.stringify(chunk));
+            }
+            if (bundle.attributes?.length) {
+                zip.file(`layers/workspace/${id}/attributes.json`, JSON.stringify(bundle.attributes));
+            }
+        }
+    }
+
+    if (snapshot.map) {
+        task?.updateProgress?.(70, 'Packing map settings…');
+        zip.file('map.json', JSON.stringify(snapshot.map, null, 2));
+    }
+
+    if (snapshot.workflow) {
+        task?.updateProgress?.(80, 'Packing pipeline…');
+        zip.file('workflow/pipeline.json', JSON.stringify(snapshot.workflow.pipeline, null, 2));
+    }
+
+    if (snapshot.preferences) {
+        task?.updateProgress?.(90, 'Packing preferences…');
+        zip.file('preferences.json', JSON.stringify(snapshot.preferences, null, 2));
+    }
+
+    task?.updateProgress?.(95, 'Compressing…');
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    task?.updateProgress?.(100, 'Done');
+    return blob;
+}
+
+/**
+ * @param {ArrayBuffer|Blob} input
+ * @param {object} JSZipLib
+ * @param {{ updateProgress?: (n:number,s?:string)=>void }} [task]
+ */
+export async function parseProjectKit(input, JSZipLib, task) {
+    if (!JSZipLib?.loadAsync) {
+        throw new AppError('JSZip library not loaded', ErrorCategory.PARSE_FAILED);
+    }
+
+    task?.updateProgress?.(5, 'Reading Toolbox Kit…');
+    const buffer = input instanceof Blob ? await input.arrayBuffer() : input;
+    const zip = await JSZipLib.loadAsync(buffer);
+
+    const manifestRaw = await zip.file('manifest.json')?.async('string');
+    if (!manifestRaw) {
+        throw new AppError('Invalid Toolbox Kit — missing manifest.json', ErrorCategory.PARSE_FAILED);
+    }
+
+    const manifest = JSON.parse(manifestRaw);
+    const validation = validateProjectKitManifest(manifest);
+    if (!validation.ok) {
+        throw new AppError(validation.error, ErrorCategory.UNSUPPORTED_FORMAT);
+    }
+
+    const sections = normalizeSections(manifest.sections);
+    const snapshot = { manifest, layers: null, map: null, workflow: null, preferences: null };
+
+    if (sections.includes('layers') && zip.file('layers/index.json')) {
+        task?.updateProgress?.(30, 'Loading layers…');
+        snapshot.layers = await parseLayerSection(zip);
+    }
+
+    if (sections.includes('map') && zip.file('map.json')) {
+        const mapRaw = await zip.file('map.json').async('string');
+        snapshot.map = JSON.parse(mapRaw);
+    }
+
+    if (sections.includes('workflow') && zip.file('workflow/pipeline.json')) {
+        task?.updateProgress?.(70, 'Loading pipeline…');
+        const wfRaw = await zip.file('workflow/pipeline.json').async('string');
+        snapshot.workflow = { pipeline: JSON.parse(wfRaw) };
+    }
+
+    if (sections.includes('preferences') && zip.file('preferences.json')) {
+        const prefRaw = await zip.file('preferences.json').async('string');
+        snapshot.preferences = JSON.parse(prefRaw);
+    }
+
+    task?.updateProgress?.(100, 'Done');
+    return snapshot;
+}
+
+async function parseLayerSection(zip) {
+    const indexRaw = await zip.file('layers/index.json').async('string');
+    const indexDoc = JSON.parse(indexRaw);
+    const stylesRaw = await zip.file('layers/styles.json')?.async('string');
+    const styles = stylesRaw ? JSON.parse(stylesRaw) : {};
+
+    const spatial = {};
+    const tables = {};
+    const workspace = {};
+
+    const paths = Object.keys(zip.files);
+    for (const path of paths) {
+        const spatialMatch = path.match(/^layers\/spatial\/(.+)\.geojson$/);
+        if (spatialMatch) {
+            spatial[spatialMatch[1]] = JSON.parse(await zip.file(path).async('string'));
+            continue;
+        }
+        const tableMatch = path.match(/^layers\/tables\/(.+)\.json$/);
+        if (tableMatch) {
+            tables[tableMatch[1]] = JSON.parse(await zip.file(path).async('string'));
+            continue;
+        }
+        const wsMetaMatch = path.match(/^layers\/workspace\/([^/]+)\/meta\.json$/);
+        if (wsMetaMatch) {
+            const layerKey = wsMetaMatch[1];
+            const meta = JSON.parse(await zip.file(path).async('string'));
+            const chunks = [];
+            const chunkPrefix = `layers/workspace/${layerKey}/chunks/`;
+            for (const chunkPath of paths) {
+                if (chunkPath.startsWith(chunkPrefix) && chunkPath.endsWith('.json')) {
+                    chunks.push(JSON.parse(await zip.file(chunkPath).async('string')));
+                }
+            }
+            const attrPath = `layers/workspace/${layerKey}/attributes.json`;
+            const attributes = zip.file(attrPath)
+                ? JSON.parse(await zip.file(attrPath).async('string'))
+                : [];
+            workspace[layerKey] = { meta, chunks, attributes };
+        }
+    }
+
+    return {
+        index: indexDoc.index || [],
+        activeLayerId: indexDoc.activeLayerId || null,
+        styles,
+        spatial,
+        tables,
+        workspace
+    };
+}
+
+/**
+ * @param {Blob} blob
+ * @param {string} filename
+ */
+export function downloadProjectKit(blob, projectName) {
+    const safeName = buildProjectKitDownloadName(projectName);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = safeName;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+export function summarizeProjectKit(snapshot) {
+    const sections = snapshot?.manifest?.sections || [];
+    const workflowConfig = snapshot?.workflow?.pipeline;
+    const workflowInner = workflowConfig?.pipeline ?? workflowConfig;
+    const workflowNodeCount = workflowInner?.nodes?.length ?? 0;
+    return {
+        projectName: snapshot?.manifest?.projectName || null,
+        exportedAt: snapshot?.manifest?.exportedAt || null,
+        layerCount: snapshot?.layers?.index?.length ?? snapshot?.manifest?.layerCount ?? 0,
+        sections,
+        hasMap: !!snapshot?.map,
+        hasWorkflow: workflowNodeCount > 0,
+        hasPreferences: !!snapshot?.preferences,
+        workflowNodeCount
+    };
+}
+
+export default {
+    PROJECT_KIT_FORMAT,
+    PROJECT_KIT_FORMAT_VERSION,
+    PROJECT_KIT_EXTENSION,
+    PROJECT_KIT_LEGACY_EXTENSION,
+    PROJECT_KIT_DISPLAY_NAME,
+    PROJECT_KIT_SECTIONS,
+    isProjectKitFile,
+    formatProjectKitDate,
+    sanitizeProjectKitBaseName,
+    buildProjectKitDownloadName,
+    validateProjectKitManifest,
+    resolveLayerIdConflict,
+    sanitizeProjectKitFilename,
+    buildProjectKitSnapshot,
+    packProjectKit,
+    parseProjectKit,
+    downloadProjectKit,
+    summarizeProjectKit
+};

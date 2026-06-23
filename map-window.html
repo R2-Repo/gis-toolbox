@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIS Toolbox — Map (Dual Screen)</title>
+    <meta name="robots" content="noindex">
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="css/map-window.css">
+    <link rel="icon" type="image/png" href="icons/favicon.png">
+</head>
+<body class="map-window-body">
+    <header class="map-window-header">
+        <span class="map-window-title">GIS-Toolbox.com — Dual Screen Map</span>
+        <div class="map-window-header-controls">
+            <div class="header-toggle" id="basemap-toggle">
+                <button type="button" class="header-toggle-option active" data-value="voyager">🗺️ Map</button>
+                <button type="button" class="header-toggle-option" data-value="satellite">🛰️ Satellite</button>
+            </div>
+            <div class="header-toggle" id="dimension-toggle">
+                <button type="button" class="header-toggle-option active" data-value="2d">2D</button>
+                <button type="button" class="header-toggle-option" data-value="3d">3D</button>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-exit-dual-screen">Exit Dual Screen</button>
+        </div>
+    </header>
+    <main class="map-window-main">
+        <div id="map-container"></div>
+    </main>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7.1.0/turf.min.js"></script>
+    <script type="module" src="js/map-window.js"></script>
+</body>
+</html>
