@@ -35,10 +35,7 @@ import {
     doExport,
     fixAGOL,
     showDataTable,
-    selectAllFeatures,
-    invertSelection,
     deleteSelectedFeatures,
-    clearSelection,
     getRightPanelSnapshot,
     handleLayerStyleChange,
     handleLayerScaleRangeChange,
@@ -178,6 +175,9 @@ function AppShell() {
                     onDimensionChange={onDimensionChange}
                     onLogs={toggleLogs}
                     onInfo={showToolInfo}
+                    getActiveLayer={getActiveLayer}
+                    getSelectionCount={(layerId) => mapService.getSelectionCount(layerId)}
+                    onDeleteSelected={deleteSelectedFeatures}
                     canUndo={toolbar.canUndo}
                     canRedo={toolbar.canRedo}
                     showMerge={toolbar.showMerge}
@@ -222,16 +222,7 @@ function AppShell() {
                                 activeLayer={activeLayer}
                                 hasLayers={layers.length > 0}
                                 gisTools={(
-                                    <GisToolsPanel
-                                        getActiveLayer={getActiveLayer}
-                                        getSelectionCount={(layerId) => mapService.getSelectionCount(layerId)}
-                                        selectionActions={{
-                                            onSelectAll: selectAllFeatures,
-                                            onInvertSelection: invertSelection,
-                                            onDeleteSelected: deleteSelectedFeatures,
-                                            onClearSelection: clearSelection
-                                        }}
-                                    />
+                                    <GisToolsPanel />
                                 )}
                             />
                         </div>
