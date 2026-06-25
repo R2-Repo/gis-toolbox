@@ -1,4 +1,3 @@
-import { SelectionBar } from '../map/SelectionBar.jsx';
 import { getEnabledMapGisTools } from '../../js/tools/tool-catalog.js';
 
 const MAP_CATEGORY_LABELS = {
@@ -11,11 +10,7 @@ const MAP_CATEGORY_LABELS = {
 
 const MAP_CATEGORY_ORDER = ['transformation', 'combine-analyze', 'coordinates', 'measurement', 'line-ops'];
 
-export function GisToolsPanel({
-    selectionActions,
-    getActiveLayer,
-    getSelectionCount
-}) {
+export function GisToolsPanel() {
     const enabled = getEnabledMapGisTools();
     const byCategory = new Map();
     for (const tool of enabled) {
@@ -25,14 +20,6 @@ export function GisToolsPanel({
 
     return (
         <>
-            <SelectionBar
-                getActiveLayer={getActiveLayer}
-                getSelectionCount={getSelectionCount}
-                onSelectAll={selectionActions?.onSelectAll}
-                onInvertSelection={selectionActions?.onInvertSelection}
-                onDeleteSelected={selectionActions?.onDeleteSelected}
-                onClearSelection={selectionActions?.onClearSelection}
-            />
             {MAP_CATEGORY_ORDER.filter((cat) => byCategory.has(cat)).map((cat) => {
                 const tools = byCategory.get(cat);
                 return (
