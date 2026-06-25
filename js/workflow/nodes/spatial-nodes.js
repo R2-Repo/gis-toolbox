@@ -15,7 +15,9 @@ import {
     intersectLayers,
     mergeLayers,
     differenceLayers,
-    summarizeWithin
+    summarizeWithin,
+    sampleFeatures,
+    explodeFeatures
 } from '../../tools/gis-tools.js';
 import { reprojectLayer } from '../../tools/reproject.js';
 
@@ -465,6 +467,62 @@ export class SplitByGeometryNode extends NodeBase {
 }
 
 // ==============================
+// Sample
+// ==============================
+export class SampleNode extends NodeBase {
+    constructor() {
+        super('sample', {
+            name: 'Sample',
+            icon: '🎲',
+            category: 'spatial',
+            color: '#059669'
+        });
+        this.inputPorts = [{ id: 'in', label: 'Features', dataType: 'dataset' }];
+        this.outputPorts = [{ id: 'out', label: 'Sampled', dataType: 'dataset' }];
+        this.config = { num: 10 };
+    }
+
+    validate() {
+        const num = Math.floor(Number(this.config.num));
+        if (!Number.isFinite(num) || num <= 0) {
+            return { valid: false, message: 'Sample count must be > 0' };
+        }
+        return { valid: true, message: '' };
+    }
+
+    async execute(inputs) {
+        const data = inputs[0];
+        if (!data || data.type !== 'spatial') throw new Error('Spatial input required');
+        return sampleFeatures(data, this.config.num);
+    }
+}
+
+// ==============================
+// Explode
+// ==============================
+export class ExplodeNode extends NodeBase {
+    constructor() {
+        super('explode', {
+            name: 'Explode',
+            icon: '💥',
+            category: 'spatial',
+            color: '#059669'
+        });
+        this.inputPorts = [{ id: 'in', label: 'Features', dataType: 'dataset' }];
+        this.outputPorts = [{ id: 'out', label: 'Points', dataType: 'dataset' }];
+        this.config = {};
+    }
+
+    validate() { return { valid: true, message: '' }; }
+
+    async execute(inputs) {
+        const data = inputs[0];
+        if (!data || data.type !== 'spatial') throw new Error('Spatial input required');
+        return explodeFeatures(data);
+    }
+}
+
+// ==============================
 // Reproject
 // ==============================
 export class ReprojectNode extends NodeBase {
@@ -515,5 +573,7 @@ export const SPATIAL_NODES = [
     { type: 'merge-layers', label: 'Merge Layers', icon: '🔀', create: () => new MergeLayersNode() },
     { type: 'difference', label: 'Difference', icon: '➖', create: () => new DifferenceNode() },
     { type: 'summarize-within', label: 'Summarize Within', icon: '📊', create: () => new SummarizeWithinNode() },
-    { type: 'split-by-geometry', label: 'Split By Geometry', icon: '🔱', create: () => new SplitByGeometryNode() }
+    { type: 'split-by-geometry', label: 'Split By Geometry', icon: '🔱', create: () => new SplitByGeometryNode() },
+    { type: 'sample', label: 'Sample', icon: '🎲', create: () => new SampleNode() },
+    { type: 'explode', label: 'Explode', icon: '💥', create: () => new ExplodeNode() }
 ];

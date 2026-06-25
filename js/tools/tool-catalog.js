@@ -32,6 +32,7 @@ export const MAP_GIS_TOOLS = [
     { id: 'line-slice', action: 'openLineSlice', category: 'line-ops', label: '✂ Slice Pts', tip: 'Click two points on the map to cut out the section of line between them.' },
     { id: 'line-intersect', action: 'openLineIntersect', category: 'line-ops', label: '✖ Intersect', tip: 'Find all points where two sets of lines cross each other.' },
     { id: 'kinks', action: 'openKinks', category: 'line-ops', label: '⚠ Kinks', tip: 'Find self-intersections in line or polygon geometries.' },
+    { id: 'explode', action: 'openExplode', category: 'line-ops', label: '💥 Explode', tip: 'Extract every vertex as a point feature — creates a new point layer.' },
 
     { id: 'combine', action: 'openCombine', category: 'combine-analyze', label: '🔗 Combine', tip: 'Merge all features of the same type into one multi-feature.' },
     { id: 'union', action: 'openUnion', category: 'combine-analyze', label: '🔶 Union', tip: 'Merge all polygons into a single shape.' },
@@ -46,7 +47,8 @@ export const MAP_GIS_TOOLS = [
     { id: 'nearest-point', action: 'openNearestPoint', category: 'combine-analyze', label: '🎯 Nearest Pt', tip: 'Click the map to find the closest feature in a point layer.' },
     { id: 'nearest-on-line', action: 'openNearestPointOnLine', category: 'combine-analyze', label: '📍→ Snap', tip: 'Click near a line to find the closest point on that line.' },
     { id: 'nearest-point-to-line', action: 'openNearestPointToLine', category: 'combine-analyze', label: '📍↔ Pt to Ln', tip: 'Find which point feature is closest to a given line.' },
-    { id: 'nn-analysis', action: 'openNearestNeighborAnalysis', category: 'combine-analyze', label: '📊 NN Analysis', tip: 'Statistically test whether points are clustered, spread apart, or random.' }
+    { id: 'nn-analysis', action: 'openNearestNeighborAnalysis', category: 'combine-analyze', label: '📊 NN Analysis', tip: 'Statistically test whether points are clustered, spread apart, or random.' },
+    { id: 'sample', action: 'openSample', category: 'combine-analyze', label: '🎲 Sample', tip: 'Randomly pick N features from the layer — creates a new layer.' }
 ];
 
 const MAP_CATEGORY_LABELS = {
@@ -68,7 +70,11 @@ export const V1_MAP_TOOL_IDS = new Set([
     'dissolve',
     'line-offset',
     'reproject',
-    'points-in-poly'
+    'points-in-poly',
+    'union',
+    'kinks',
+    'sample',
+    'explode'
 ]);
 
 /** Pipeline node types enabled in V1 testing mode. */
@@ -83,6 +89,9 @@ export const V1_PIPELINE_NODE_TYPES = new Set([
     'line-offset',
     'reproject',
     'spatial-join',
+    'union',
+    'sample',
+    'explode',
     'add-to-map',
     'preview'
 ]);

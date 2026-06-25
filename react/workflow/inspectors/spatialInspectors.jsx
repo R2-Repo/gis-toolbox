@@ -301,6 +301,31 @@ function ReprojectInspector({ config, onConfigChange }) {
     );
 }
 
+function SampleInspector({ config, onConfigChange }) {
+    return (
+        <>
+            <InfoText>Randomly selects features from the input layer without replacement.</InfoText>
+            <InspectorLabel style={{ marginTop: 8 }}>Number of features</InspectorLabel>
+            <InspectorInput
+                type="number"
+                value={config.num ?? 10}
+                min={1}
+                step={1}
+                onChange={(v) => onConfigChange({ ...config, num: parseInt(v, 10) || 1 })}
+            />
+            <HintText>If the layer has fewer features, all features are returned.</HintText>
+        </>
+    );
+}
+
+function ExplodeInspector() {
+    return (
+        <InfoText>
+            Extracts every coordinate vertex as a point feature. Parent feature attributes are copied to each point.
+        </InfoText>
+    );
+}
+
 export const SPATIAL_INSPECTORS = {
     buffer: BufferInspector,
     reproject: ReprojectInspector,
@@ -316,5 +341,7 @@ export const SPATIAL_INSPECTORS = {
     'merge-layers': MergeLayersInspector,
     difference: DifferenceInspector,
     'summarize-within': SummarizeWithinInspector,
-    'split-by-geometry': SplitByGeometryInspector
+    'split-by-geometry': SplitByGeometryInspector,
+    sample: SampleInspector,
+    explode: ExplodeInspector
 };

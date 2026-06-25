@@ -3010,6 +3010,78 @@ async function openUnion() {
         });
 }
 
+// --- Sample ---
+async function openSample() {
+    const layer = await requireSpatialLayer();
+    if (!layer) return;
+
+    const work = getWorkingFeatures(layer);
+
+    const rootId = `sample-react-${Date.now()}`;
+    showModal('Random Sample', `<div id="${rootId}"></div>`, {
+        onMount: async (overlay, close) => {
+            const root = overlay.querySelector(`#${rootId}`);
+            if (!root) return;
+
+            const { mountSampleDialog } = await import('../../react/tools/mountSampleDialog.jsx');
+            const mounted = mountSampleDialog(root, {
+                selectionCount: mapService.getSelectionCount(layer.id),
+                totalCount: work.totalCount,
+                layerName: layer.name,
+                onCancel: () => close(),
+                onApply: async ({ num, applyTo }) => {
+                    close();
+                    try {
+                        const result = await gisTools.sampleFeatures(getWorkingDataset(layer, applyTo), num);
+                        addResultLayer(result);
+                        showToast(`Sampled ${result.geojson.features.length} feature(s)`, 'success');
+                    } catch (e) {
+                        showErrorToast(handleError(e, 'GISTools', 'Sample'));
+                    }
+                }
+            });
+            watchOverlayUnmount(overlay, () => mounted.unmount?.());
+        }
+    });
+}
+
+// --- Explode ---
+async function openExplode() {
+    const layer = await requireSpatialLayer();
+    if (!layer) return;
+
+    const work = getWorkingFeatures(layer);
+
+    const rootId = `explode-react-${Date.now()}`;
+    showModal('Explode Vertices', `<div id="${rootId}"></div>`, {
+        onMount: async (overlay, close) => {
+            const root = overlay.querySelector(`#${rootId}`);
+            if (!root) return;
+
+            const { mountExplodeDialog } = await import('../../react/tools/mountExplodeDialog.jsx');
+            const mounted = mountExplodeDialog(root, {
+                selectionCount: mapService.getSelectionCount(layer.id),
+                totalCount: work.totalCount,
+                layerName: layer.name,
+                onCancel: () => close(),
+                onApply: async ({ applyTo }) => {
+                    close();
+                    try {
+                        const result = await runWithTaskProgress('Explode', () =>
+                            gisTools.explodeFeatures(getWorkingDataset(layer, applyTo))
+                        );
+                        addResultLayer(result);
+                        showToast(`Extracted ${result.geojson.features.length} point(s)`, 'success');
+                    } catch (e) {
+                        showErrorToast(handleError(e, 'GISTools', 'Explode'));
+                    }
+                }
+            });
+            watchOverlayUnmount(overlay, () => mounted.unmount?.());
+        }
+    });
+}
+
 // --- Dissolve ---
 async function openDissolve() {
     const layer = await requireSpatialLayer(['Polygon', 'MultiPolygon']);
@@ -4629,6 +4701,8 @@ const APP_ACTIONS = {
     openKinks,
     openCombine,
     openUnion,
+    openSample,
+    openExplode,
     openDissolve,
     openSector,
     openNearestPoint,
