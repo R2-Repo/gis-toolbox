@@ -4,6 +4,7 @@
  */
 import logger from '../core/logger.js';
 import bus from '../core/event-bus.js';
+import { getActiveLayer, setActiveLayer } from '../core/state.js';
 import { flattenFeatureGeometryCollections, isWorkspaceLayer } from '../core/data-model.js';
 import { MAP_CHUNK_BATCH_SIZE, RENDER_LIMITS } from './render-limits.js';
 import { buildViewportGeoJSON } from '../workspace/viewport-loader.js';
@@ -1015,10 +1016,10 @@ class MapManager {
                     this._popupLatLng = latlng;
                     this._renderCyclePopup();
 
-                    if (this._canSelect() && this._isActiveLayer(dataset.id)) {
+                    if (this._canSelect()) {
                         const ev = e.originalEvent;
                         const toggle = !!(ev?.shiftKey || ev?.ctrlKey || ev?.metaKey);
-                        this._handleSelectionClick(dataset.id, featureIndex, toggle);
+                        this._syncSelectionContext(dataset.id, featureIndex, { toggle });
                     }
                 });
             });
@@ -2964,6 +2965,22 @@ class MapManager {
 
     isSelectionMode() { return this._canSelect(); }
 
+    _syncSelectionContext(layerId, featureIndex, { toggle = false } = {}) {
+        if (!this._canSelect()) return;
+        const previousId = getActiveLayer()?.id;
+        if (layerId !== previousId) {
+            if (previousId) this.clearSelection(previousId);
+            setActiveLayer(layerId);
+        }
+        this._handleSelectionClick(layerId, featureIndex, toggle);
+    }
+
+    _syncPopupHitSelection() {
+        const hit = this._getActivePopupHit();
+        if (!hit) return;
+        this._syncSelectionContext(hit.layerId, hit.featureIndex, { toggle: false });
+    }
+
     _handleSelectionClick(layerId, featureIndex, toggleKey) {
         if (!this._isActiveLayer(layerId)) return;
         if (!this._selections.has(layerId)) this._selections.set(layerId, new Set());
@@ -3577,6 +3594,7 @@ class MapManager {
                 const len = this._popupHits.length;
                 this._popupIndex = (this._popupIndex + dir + len) % len;
                 this._renderCyclePopup();
+                this._syncPopupHitSelection();
             } else if (action === 'edit') {
                 const hit = this._getActivePopupHit();
                 if (!hit) return;
