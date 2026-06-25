@@ -1,0 +1,8 @@
+# GIS Toolbox — legacy agent rules (see .cursor/rules/ and AGENTS.md)
+
+GIT WORKFLOW (MANDATORY):
+- Develop locally on staging only. Never edit main during feature work.
+- Only two branches: main (production) and staging (development). No feature branches.
+- Do not commit, push, merge, or create PRs unless the user explicitly asks.
+- User commits and merges via GitHub Desktop.
+- Read AGENTS.md and docs/DEVELOPMENT.md for full details.

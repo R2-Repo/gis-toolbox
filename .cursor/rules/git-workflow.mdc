@@ -1,0 +1,40 @@
+---
+description: Local-first git workflow — staging only, no PRs, no feature branches
+alwaysApply: true
+---
+
+# Git Workflow (MANDATORY)
+
+This project uses a **local-first, two-branch** workflow. Follow it exactly.
+
+## Branches
+
+- **`staging`** — all development happens here
+- **`main`** — production only; never edit directly during feature work
+
+Do **not** create feature branches, topic branches, or PR branches unless the user explicitly asks.
+
+## Agent responsibilities
+
+- Edit files locally on the user's machine
+- Assume the current branch is `staging` unless told otherwise
+- **Never** run `git commit`, `git push`, `git merge`, or `gh pr create` unless the user explicitly asks
+- **Never** suggest opening a pull request unless the user asks for one
+- **Never** switch to or modify `main` for development
+- **Never** create cloud agents or worktrees that end in PRs unless the user asks
+
+## User responsibilities
+
+- The user commits via **GitHub Desktop**
+- The user pushes `staging` when ready
+- The user merges `staging` → `main` in GitHub Desktop when ready for production
+
+## Deployment
+
+- Push to `staging` → staging preview deploys automatically
+- Push to `main` → production deploys automatically
+- See `.github/workflows/deploy-pages.yml`
+
+## When work is done
+
+Stop at local file changes. Tell the user they can commit and push `staging` in GitHub Desktop. Do not commit or push unless explicitly requested.

@@ -1,0 +1,23 @@
+---
+description: Core project standards and agent entry point for GIS Toolbox
+alwaysApply: true
+---
+
+# GIS Toolbox
+
+Read `AGENTS.md` before substantive work. For git and release workflow, also read `docs/DEVELOPMENT.md`.
+
+## Stack
+
+Browser-based GIS toolkit — React 19, Vite, vanilla JS modules under `js/`, React islands under `react/`.
+
+## Code
+
+- Match existing patterns in surrounding files
+- Minimize scope — focused changes only
+- Reuse existing abstractions; do not reimplement similar logic
+- Only add tests when requested or when they add meaningful coverage
+
+## Git (summary)
+
+Local edits on `staging` only. No feature branches. No PRs. User commits and merges via GitHub Desktop. See `.cursor/rules/git-workflow.mdc`.
