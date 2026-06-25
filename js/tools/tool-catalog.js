@@ -77,11 +77,26 @@ export const V1_MAP_TOOL_IDS = new Set([
     'explode'
 ]);
 
+/** Pipeline nodes matching the map Layer Data Tools panel (see LayerDataToolsPanel.jsx). */
+export const LAYER_DATA_NODE_ORDER = [
+    'split-column',
+    'combine-fields',
+    'template-builder',
+    'find-replace',
+    'type-convert',
+    'filter-rows',
+    'deduplicate',
+    'join-lookup',
+    'add-unique-id'
+];
+
+export const LAYER_DATA_NODE_TYPES = new Set(LAYER_DATA_NODE_ORDER);
+
 /** Pipeline node types enabled in V1 testing mode. */
 export const V1_PIPELINE_NODE_TYPES = new Set([
     'layer-input',
     'file-import',
-    'filter-rows',
+    ...LAYER_DATA_NODE_ORDER,
     'buffer',
     'simplify',
     'clip',
@@ -103,6 +118,14 @@ export const V1_PIPELINE_NODE_TYPES = new Set([
 export function isMapToolEnabled(id) {
     if (!GIS_TOOL_V1_MODE) return true;
     return V1_MAP_TOOL_IDS.has(id);
+}
+
+/**
+ * @param {string} type
+ * @returns {boolean}
+ */
+export function isLayerDataNodeType(type) {
+    return LAYER_DATA_NODE_TYPES.has(type);
 }
 
 /**

@@ -4,14 +4,22 @@ import { SPATIAL_NODES } from './nodes/spatial-nodes.js';
 import { ENRICHMENT_NODES } from './nodes/enrichment-nodes.js';
 import { OUTPUT_NODES } from './nodes/output-nodes.js';
 import { getNodeDescription } from './node-descriptions.js';
+import { LAYER_DATA_NODE_ORDER, LAYER_DATA_NODE_TYPES } from '../tools/tool-catalog.js';
 
 function withDescription(def) {
     return { ...def, description: getNodeDescription(def) };
 }
 
+const transformNodeByType = new Map(TRANSFORM_NODES.map((def) => [def.type, def]));
+const LAYER_DATA_NODES = LAYER_DATA_NODE_ORDER
+    .map((type) => transformNodeByType.get(type))
+    .filter(Boolean);
+const OTHER_TRANSFORM_NODES = TRANSFORM_NODES.filter((def) => !LAYER_DATA_NODE_TYPES.has(def.type));
+
 export const NODE_CATEGORIES = [
     { key: 'input', label: 'Inputs', color: '#d97706', nodes: INPUT_NODES.map(withDescription) },
-    { key: 'transform', label: 'Transforms', color: '#2563eb', nodes: TRANSFORM_NODES.map(withDescription) },
+    { key: 'layer-data', label: 'Layer Data Tools', color: '#2563eb', nodes: LAYER_DATA_NODES.map(withDescription) },
+    { key: 'transform', label: 'Transforms', color: '#2563eb', nodes: OTHER_TRANSFORM_NODES.map(withDescription) },
     { key: 'spatial', label: 'Spatial', color: '#059669', nodes: SPATIAL_NODES.map(withDescription) },
     { key: 'enrichment', label: 'Enrichment', color: '#0891b2', nodes: ENRICHMENT_NODES.map(withDescription) },
     { key: 'output', label: 'Outputs', color: '#7c3aed', nodes: OUTPUT_NODES.map(withDescription) }
