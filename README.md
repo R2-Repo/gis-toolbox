@@ -15,6 +15,8 @@ We do **not** use feature branches or pull requests for normal development.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details and [AGENTS.md](AGENTS.md) for AI agent instructions.
 
+Building a **GIS Widget** (left-panel wizard)? Start with [docs/WIDGET_AGENT_PLAYBOOK.md](docs/WIDGET_AGENT_PLAYBOOK.md).
+
 ## Local setup
 
 ```bash

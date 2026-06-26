@@ -63,15 +63,28 @@ When work is complete:
 - Only add tests when requested or when they add meaningful coverage
 - Comments only for non-obvious business logic
 
+## GIS Widgets (multi-step panel wizards)
+
+When the user wants to **add or change a GIS Widget** (left panel → **GIS Widgets** section):
+
+1. **Read first:** [`docs/WIDGET_AGENT_PLAYBOOK.md`](docs/WIDGET_AGENT_PLAYBOOK.md) — architecture, reference widgets, workflow
+2. **Then:** [`docs/WIDGET_AUTHORING.md`](docs/WIDGET_AUTHORING.md) — step-by-step checklist and smoke test list
+3. Register in `js/widgets/registry.js` only; wire through `js/widgets/<id>/controller.js` + `openReactIsland()`
+
+Do not put widget logic inline in `js/tools/tool-handlers.js`. Copy the closest existing widget under `js/widgets/` (simplest: `spatial-analyzer/`).
+
 ## Project layout (quick reference)
 
 | Path | Purpose |
 |------|---------|
-| `js/` | Core app logic (map, import, export, workflow, widgets) |
+| `js/widgets/` | GIS Widget engines, controllers, registry |
+| `react/widgets/` | Widget React dialogs and shared wizard UI |
+| `js/` | Core app logic (map, import, export, workflow, tools) |
 | `react/` | React UI islands (tools, panels, workflow editor) |
 | `css/` | Stylesheets |
 | `pipelines/` | Saved workflow pipeline JSON |
 | `public/` | Static assets |
+| `docs/` | Development guide, widget playbook, authoring checklist |
 
 ## Local development
 

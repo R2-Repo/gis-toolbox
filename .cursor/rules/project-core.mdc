@@ -7,6 +7,8 @@ alwaysApply: true
 
 Read `AGENTS.md` before substantive work. For git and release workflow, also read `docs/DEVELOPMENT.md`.
 
+**New GIS Widget work:** read `docs/WIDGET_AGENT_PLAYBOOK.md` first, then `docs/WIDGET_AUTHORING.md`.
+
 ## Stack
 
 Browser-based GIS toolkit — React 19, Vite, vanilla JS modules under `js/`, React islands under `react/`.

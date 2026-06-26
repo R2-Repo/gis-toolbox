@@ -6,3 +6,7 @@ GIT WORKFLOW (MANDATORY):
 - Do not commit, push, merge, or create PRs unless the user explicitly asks.
 - User commits and merges via GitHub Desktop.
 - Read AGENTS.md and docs/DEVELOPMENT.md for full details.
+
+GIS WIDGETS (new or changed panel wizards):
+- Read docs/WIDGET_AGENT_PLAYBOOK.md first, then docs/WIDGET_AUTHORING.md.
+- Register in js/widgets/registry.js; wire via js/widgets/<id>/controller.js.
