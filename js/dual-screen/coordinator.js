@@ -9,7 +9,8 @@ import {
     createMessage,
     buildSnapshotPayload,
     boundsFromViewportPayload,
-    serializeMapRpcArgs
+    serializeMapRpcArgs,
+    serializeLayerMetaForRestyle
 } from './protocol.js';
 import { setDualScreenActiveHint } from './storage-hint.js';
 import { scheduleMapResizeAfterLayout, syncDualScreenPrimaryUi } from './layout.js';
@@ -385,10 +386,15 @@ class DualScreenCoordinator {
                 id: dataset.id,
                 name: dataset.name,
                 type: dataset.type,
+                storage: dataset.storage ?? null,
+                workspaceLayerId: dataset.workspaceLayerId ?? null,
                 visible: dataset.visible !== false,
                 geojson: dataset.geojson ? JSON.parse(JSON.stringify(dataset.geojson)) : null,
                 mapLabels: dataset._mapLabels ?? null,
-                kmlExport: dataset._kmlExport ?? null
+                kmlExport: dataset._kmlExport ?? null,
+                scaleRangeEnabled: !!dataset.scaleRangeEnabled,
+                minScale: dataset.minScale ?? null,
+                maxScale: dataset.maxScale ?? null
             },
             colorIndex,
             fit: !!options.fit,
@@ -404,6 +410,16 @@ class DualScreenCoordinator {
     broadcastLayerOrder(orderedIds) {
         if (!this._channel) return;
         this._channel.post(createMessage('primary', MessageType.LAYER_ORDER, { orderedIds }));
+    }
+
+    broadcastLayerStyle(layerId, style, layerMeta = null) {
+        if (!this._channel || !layerId || !style) return;
+        const meta = layerMeta ?? getLayers().find((l) => l.id === layerId) ?? null;
+        this._channel.post(createMessage('primary', MessageType.LAYER_STYLE, {
+            layerId,
+            style: JSON.parse(JSON.stringify(style)),
+            layerMeta: meta ? serializeLayerMetaForRestyle(meta) : null
+        }));
     }
 
     broadcastFit(command, payload = {}) {

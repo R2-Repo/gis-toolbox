@@ -18,11 +18,20 @@ import {
 } from './dual-screen/secondary-client.js';
 
 const ROLE = 'secondary';
+const QUEUED_MESSAGE_TYPES = new Set([
+    MessageType.SNAPSHOT,
+    MessageType.LAYER_ADD,
+    MessageType.LAYER_STYLE
+]);
+
 let channel = null;
 let suppressViewportBroadcast = false;
 let lastAppliedViewportId = null;
 let viewportDebounce = null;
 let byeSent = false;
+let mapReady = false;
+/** @type {object[]} */
+const pendingMessages = [];
 
 function post(type, payload) {
     channel?.post(createMessage(ROLE, type, payload));
@@ -32,6 +41,43 @@ function sendBye() {
     if (byeSent) return;
     byeSent = true;
     post(MessageType.BYE, {});
+}
+
+function isWorkspaceLayerMeta(entry) {
+    return entry?.storage === 'workspace' || entry?.type === 'spatial-chunked';
+}
+
+function entryToDataset(entry) {
+    if (!entry?.id) return null;
+    const geojson = entry.geojson || { type: 'FeatureCollection', features: [] };
+    const dataset = createSpatialDataset(entry.name || entry.id, geojson, entry.source || { format: 'sync' });
+    dataset.id = entry.id;
+    dataset.type = entry.type || 'spatial';
+    dataset.visible = entry.visible !== false;
+    if (entry.storage) dataset.storage = entry.storage;
+    if (entry.workspaceLayerId) dataset.workspaceLayerId = entry.workspaceLayerId;
+    if (entry.scaleRangeEnabled) {
+        dataset.scaleRangeEnabled = true;
+        dataset.minScale = entry.minScale ?? null;
+        dataset.maxScale = entry.maxScale ?? null;
+    }
+    if (entry.mapLabels) dataset._mapLabels = entry.mapLabels;
+    if (entry.kmlExport) dataset._kmlExport = entry.kmlExport;
+    return dataset;
+}
+
+function applyLayerStyle(layerId, dataset, style) {
+    if (!layerId || !style) return;
+    mapService.setLayerStyle(layerId, style);
+    if (!dataset) return;
+    mapService.restyleLayer?.(layerId, dataset, style);
+}
+
+function applyLayerStyleMessage(payload) {
+    const { layerId, style, layerMeta } = payload || {};
+    if (!layerId || !style) return;
+    const dataset = layerMeta ? entryToDataset(layerMeta) : null;
+    applyLayerStyle(layerId, dataset, style);
 }
 
 function applySnapshot(payload) {
@@ -50,19 +96,14 @@ function applySnapshot(payload) {
     }
 
     (layers || []).forEach((entry, i) => {
-        if (!entry.geojson) return;
-        const dataset = createSpatialDataset(entry.name, entry.geojson, entry.source || { format: 'sync' });
-        dataset.id = entry.id;
-        dataset.visible = entry.visible !== false;
-        if (entry.scaleRangeEnabled) {
-            dataset.scaleRangeEnabled = true;
-            dataset.minScale = entry.minScale ?? null;
-            dataset.maxScale = entry.maxScale ?? null;
+        if (!entry.geojson && !isWorkspaceLayerMeta(entry)) return;
+        const dataset = entryToDataset(entry);
+        if (!dataset) return;
+        if (entry.style) {
+            applyLayerStyle(entry.id, dataset, entry.style);
+        } else {
+            mapService.addLayer(dataset, i, { fit: false });
         }
-        if (entry.style) mapService.setLayerStyle(entry.id, entry.style);
-        if (entry.mapLabels) dataset._mapLabels = entry.mapLabels;
-        if (entry.kmlExport) dataset._kmlExport = entry.kmlExport;
-        mapService.addLayer(dataset, i, { fit: false });
     });
 
     if (is3d) mapService.enable3D();
@@ -87,22 +128,16 @@ function applySnapshot(payload) {
 }
 
 function applyLayerAdd(payload) {
-    const { dataset, colorIndex, fit, style } = payload || {};
-    if (!dataset?.geojson) return;
-    const layer = createSpatialDataset(dataset.name, dataset.geojson, dataset.source || { format: 'sync' });
-    layer.id = dataset.id;
-    layer.visible = dataset.visible !== false;
-    if (dataset.scaleRangeEnabled) {
-        layer.scaleRangeEnabled = true;
-        layer.minScale = dataset.minScale ?? null;
-        layer.maxScale = dataset.maxScale ?? null;
-    }
-    if (dataset.mapLabels) layer._mapLabels = dataset.mapLabels;
-    if (dataset.kmlExport) layer._kmlExport = dataset.kmlExport;
-    if (style) mapService.setLayerStyle(layer.id, style);
+    const { dataset: raw, colorIndex, fit, style } = payload || {};
+    if (!raw?.geojson && !isWorkspaceLayerMeta(raw)) return;
+    const layer = entryToDataset(raw);
+    if (!layer) return;
     mapService.removeLayer(layer.id);
-    mapService.addLayer(layer, colorIndex ?? 0, { fit: !!fit });
-    if (style) mapService.restyleLayer?.(layer.id, layer, style);
+    if (style) {
+        applyLayerStyle(layer.id, layer, style);
+    } else {
+        mapService.addLayer(layer, colorIndex ?? 0, { fit: !!fit });
+    }
 }
 
 function applyLayerRemove(payload) {
@@ -158,6 +193,13 @@ function broadcastViewport() {
     post(MessageType.VIEWPORT, broadcastViewportFromMap(map));
 }
 
+function flushPendingMessages() {
+    const queue = pendingMessages.splice(0, pendingMessages.length);
+    for (const msg of queue) {
+        dispatchMessage(msg);
+    }
+}
+
 function onMapReady() {
     const map = mapService.getMap();
     if (!map) return;
@@ -165,10 +207,13 @@ function onMapReady() {
         clearTimeout(viewportDebounce);
         viewportDebounce = setTimeout(broadcastViewport, 80);
     });
+    mapReady = true;
+    flushPendingMessages();
+    post(MessageType.HELLO, {});
 }
 
 function applyMapCmd(payload) {
-    const { action, geojson, duration, layerId, dataset, style } = payload || {};
+    const { action, geojson, duration, layerId, range, latitude, style, dataset } = payload || {};
     switch (action) {
         case 'showTempFeature':
             mapService.showTempFeature(geojson, duration ?? 10000);
@@ -185,10 +230,19 @@ function applyMapCmd(payload) {
         case 'cancelInteraction':
             mapService.cancelInteraction?.();
             break;
+        case 'setLayerScaleRange': {
+            const map = mapService.getMap();
+            if (!layerId || !range || !map) break;
+            mapService.setLayerScaleRange(
+                layerId,
+                range,
+                latitude ?? map.getCenter().lat
+            );
+            break;
+        }
         case 'restyleLayer':
             if (layerId && style) {
-                mapService.setLayerStyle(layerId, style);
-                if (dataset) mapService.restyleLayer?.(layerId, dataset, style);
+                applyLayerStyle(layerId, dataset, style);
             }
             break;
         default:
@@ -196,7 +250,7 @@ function applyMapCmd(payload) {
     }
 }
 
-async function handleMapRpc(payload, post) {
+async function handleMapRpc(payload, postFn) {
     const { requestId, method, args = [] } = payload || {};
     try {
         const fn = mapService[method];
@@ -204,22 +258,25 @@ async function handleMapRpc(payload, post) {
             throw new Error(`Unknown map method: ${method}`);
         }
         const result = await fn.apply(mapService, args);
-        post(MessageType.MAP_RPC_RESULT, { requestId, result });
+        postFn(MessageType.MAP_RPC_RESULT, { requestId, result });
     } catch (err) {
-        post(MessageType.MAP_RPC_RESULT, {
+        postFn(MessageType.MAP_RPC_RESULT, {
             requestId,
             error: err?.message || String(err)
         });
     }
 }
 
-function handleMessage(msg) {
+function dispatchMessage(msg) {
     switch (msg.type) {
         case MessageType.SNAPSHOT:
             applySnapshot(msg.payload);
             break;
         case MessageType.LAYER_ADD:
             applyLayerAdd(msg.payload);
+            break;
+        case MessageType.LAYER_STYLE:
+            applyLayerStyleMessage(msg.payload);
             break;
         case MessageType.LAYER_REMOVE:
             applyLayerRemove(msg.payload);
@@ -256,6 +313,14 @@ function handleMessage(msg) {
         default:
             break;
     }
+}
+
+function handleMessage(msg) {
+    if (!mapReady && QUEUED_MESSAGE_TYPES.has(msg.type)) {
+        pendingMessages.push(msg);
+        return;
+    }
+    dispatchMessage(msg);
 }
 
 function setupHeaderControls() {

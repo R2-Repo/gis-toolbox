@@ -603,8 +603,16 @@ export function handleLayerScaleRangeChange(layerId, range) {
     };
     updateLayer(layerId, patch);
 
-    const map = mapService.getMap();
-    const latitude = map?.getCenter?.()?.lat ?? 0;
+    let latitude = 0;
+    if (dualScreenCoordinator.isActive) {
+        const bounds = dualScreenCoordinator.getBounds();
+        if (bounds) {
+            latitude = (bounds.getSouth() + bounds.getNorth()) / 2;
+        }
+    } else {
+        const map = mapService.getMap();
+        latitude = map?.getCenter?.()?.lat ?? 0;
+    }
     mapService.setLayerScaleRange(layerId, patch, latitude);
     refreshUI();
 }

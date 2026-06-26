@@ -71,6 +71,8 @@ export function serializeLayerForSync(layer, index) {
         id: layer.id,
         name: layer.name,
         type: layer.type,
+        storage: layer.storage ?? null,
+        workspaceLayerId: layer.workspaceLayerId ?? null,
         visible: layer.visible !== false,
         geojson: layer.geojson ? JSON.parse(JSON.stringify(layer.geojson)) : null,
         style: layer._mapStyle || null,
@@ -78,6 +80,26 @@ export function serializeLayerForSync(layer, index) {
         kmlExport: layer._kmlExport ?? null,
         colorIndex: index,
         source: layer.source,
+        scaleRangeEnabled: !!layer.scaleRangeEnabled,
+        minScale: layer.minScale ?? null,
+        maxScale: layer.maxScale ?? null
+    };
+}
+
+/** Minimal layer metadata for targeted style restyle on the secondary map. */
+export function serializeLayerMetaForRestyle(layer) {
+    if (!layer) return null;
+    return {
+        id: layer.id,
+        name: layer.name,
+        type: layer.type,
+        storage: layer.storage ?? null,
+        workspaceLayerId: layer.workspaceLayerId ?? null,
+        visible: layer.visible !== false,
+        geojson: layer.geojson ? JSON.parse(JSON.stringify(layer.geojson)) : null,
+        source: layer.source ?? null,
+        mapLabels: layer._mapLabels ?? layer.mapLabels ?? null,
+        kmlExport: layer._kmlExport ?? layer.kmlExport ?? null,
         scaleRangeEnabled: !!layer.scaleRangeEnabled,
         minScale: layer.minScale ?? null,
         maxScale: layer.maxScale ?? null

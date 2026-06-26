@@ -58,7 +58,7 @@ import {
     shouldSkipClickBinding
 } from './interaction-hit.js';
 import { buildSymbolLayerLayout } from './style-symbols.js';
-import { buildMapLabelLayerSpec, resolveLayerLabels } from './map-labels.js';
+import { buildMapLabelLayerSpec, resolveLayerLabels, isMapLabelLayerId, resolveEffectiveLabelZoomRange } from './map-labels.js';
 
 const BASEMAPS = {
     voyager: {
@@ -172,29 +172,34 @@ class MapManager {
         return resolveMapLibreZoomRange(dataset, this.map.getCenter().lat);
     }
 
-    _applyZoomRangeToLayerIds(layerIds, zoomRange) {
+    _applyZoomRangeToLayerIds(layerIds, zoomRange, labelsConfig) {
         if (!this.map || !layerIds?.length) return;
-        const minz = zoomRange?.minzoom ?? MAPLIBRE_MIN_ZOOM;
-        const maxz = zoomRange?.maxzoom ?? MAPLIBRE_MAX_ZOOM;
+        const geomMin = zoomRange?.minzoom ?? MAPLIBRE_MIN_ZOOM;
+        const geomMax = zoomRange?.maxzoom ?? MAPLIBRE_MAX_ZOOM;
+        const labelRange = resolveEffectiveLabelZoomRange(labelsConfig, zoomRange);
         for (const lid of layerIds) {
-            if (this.map.getLayer(lid)) {
-                this.map.setLayerZoomRange(lid, minz, maxz);
+            if (!this.map.getLayer(lid)) continue;
+            if (isMapLabelLayerId(lid)) {
+                this.map.setLayerZoomRange(lid, labelRange.minzoom, labelRange.maxzoom);
+            } else {
+                this.map.setLayerZoomRange(lid, geomMin, geomMax);
             }
         }
     }
 
-    _applyScaleRangeForEntry(entry, scaleRangeConfig) {
+    _applyScaleRangeForEntry(layerId, entry, scaleRangeConfig) {
         if (!entry || !this.map) return;
         const config = normalizeScaleRange(scaleRangeConfig || {});
         entry.scaleRange = config;
         const zoomRange = resolveMapLibreZoomRange(config, this.map.getCenter().lat);
-        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+        const labelsConfig = this._layerStyles.get(layerId)?.labels;
+        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
     }
 
     setLayerScaleRange(layerId, range, latitude) {
         const entry = this.dataLayers.get(layerId);
         if (!entry || !this.map) return;
-        this._applyScaleRangeForEntry(entry, range);
+        this._applyScaleRangeForEntry(layerId, entry, range);
         if (Number.isFinite(latitude)) {
             this._lastScaleRangeLat = latitude;
         }
@@ -208,10 +213,11 @@ class MapManager {
 
         this._lastScaleRangeLat = lat;
         let changed = false;
-        for (const [, entry] of this.dataLayers) {
+        for (const [layerId, entry] of this.dataLayers) {
             if (!entry.scaleRange?.scaleRangeEnabled) continue;
             const zoomRange = resolveMapLibreZoomRange(entry.scaleRange, lat);
-            this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+            const labelsConfig = this._layerStyles.get(layerId)?.labels;
+            this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
             changed = true;
         }
         if (changed) {
@@ -225,7 +231,8 @@ class MapManager {
         const scaleRangeConfig = normalizeScaleRange(dataset);
         entry.scaleRange = scaleRangeConfig;
         const zoomRange = resolveMapLibreZoomRange(scaleRangeConfig, this.map.getCenter().lat);
-        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+        const labelsConfig = this._layerStyles.get(dataset.id)?.labels;
+        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
         this._lastScaleRangeLat = this.map.getCenter().lat;
     }
 
@@ -933,7 +940,7 @@ class MapManager {
 
         this._bindLayerClickHandlers(dataset, layerIds, flat);
         const zoomRange = this._getLayerZoomRange(dataset);
-        this._applyZoomRangeToLayerIds(layerIds, zoomRange);
+        this._applyZoomRangeToLayerIds(layerIds, zoomRange, layerStyle.labels);
         return layerIds;
     }
 

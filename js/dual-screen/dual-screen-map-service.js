@@ -3,6 +3,7 @@
  * Intercepts map operations while dual-screen is active and relays them to the
  * secondary window protocol, while preserving single-window behavior by default.
  */
+import bus from '../core/event-bus.js';
 
 function buildFenceEnvelope(bbox) {
     const [west, south, east, north] = bbox;
@@ -51,6 +52,7 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         refreshLayerData: mapApi.refreshLayerData?.bind(mapApi),
         setLayerStyle: mapApi.setLayerStyle?.bind(mapApi),
         restyleLayer: mapApi.restyleLayer?.bind(mapApi),
+        setLayerScaleRange: mapApi.setLayerScaleRange?.bind(mapApi),
         fitToAll: mapApi.fitToAll?.bind(mapApi),
         fitToLayers: mapApi.fitToLayers?.bind(mapApi),
         fitBounds: mapApi.fitBounds?.bind(mapApi),
@@ -108,22 +110,30 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
 
     mapApi.setLayerStyle = function setLayerStyle(layerId, style) {
         const result = originals.setLayerStyle?.(layerId, style);
-        if (coordinator.isActive) coordinator.syncLayersChanged();
+        if (coordinator.isActive) {
+            coordinator.broadcastLayerStyle(layerId, style);
+            bus.emit('map:styleChanged', { layerId });
+        }
         return result;
     };
 
     mapApi.restyleLayer = function restyleLayer(layerId, dataset, style) {
         originals.setLayerStyle?.(layerId, style);
         if (!coordinator.isActive) return originals.restyleLayer?.(layerId, dataset, style);
-        coordinator.broadcastMapCmd('restyleLayer', {
+        coordinator.broadcastLayerStyle(layerId, style, dataset);
+        bus.emit('map:styleChanged', { layerId });
+        return undefined;
+    };
+
+    mapApi.setLayerScaleRange = function setLayerScaleRange(layerId, range, latitude) {
+        if (!coordinator.isActive) {
+            return originals.setLayerScaleRange?.(layerId, range, latitude);
+        }
+        coordinator.broadcastMapCmd('setLayerScaleRange', {
             layerId,
-            dataset: dataset ? {
-                id: dataset.id,
-                geojson: cloneJson(dataset.geojson)
-            } : null,
-            style: cloneJson(style)
+            range: cloneJson(range),
+            latitude
         });
-        coordinator.syncLayersChanged();
         return undefined;
     };
 
