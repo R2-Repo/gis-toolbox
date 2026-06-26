@@ -3,6 +3,7 @@ import { openBulkUpdate } from './bulk-update/controller.js';
 import { openProximityJoin } from './proximity-join/controller.js';
 import { openRouteMilepostSegment } from './route-milepost-segment/controller.js';
 import { openProjectStationing } from './project-stationing/controller.js';
+import { openLayerMatchAssistant } from './layer-match-assistant/controller.js';
 import { openCrsManager } from './crs-manager/controller.js';
 import logger from '../core/logger.js';
 
@@ -52,6 +53,14 @@ export const GIS_WIDGETS = [
         icon: '📐',
         tip: 'Generate 100-ft project station segments along a UDOT route centerline.',
         open: openProjectStationing
+    },
+    {
+        type: 'layer-match-assistant',
+        action: 'openLayerMatchAssistant',
+        label: 'Layer Match Assistant',
+        icon: '🔗',
+        tip: 'Compare two layers using location and fuzzy name matching; review and export matched and unmatched results.',
+        open: openLayerMatchAssistant
     }
 ];
 
