@@ -4,7 +4,7 @@ export function LayerSelect({
     onChange,
     layers = [],
     placeholder = '- select layer -',
-    formatOption = (layer) => `${layer.name} (${layer.featureCount})`,
+    formatOption = (layer) => `${layer.name} (${layer.featureCount ?? layer.count ?? 0})`,
     className = ''
 }) {
     return (

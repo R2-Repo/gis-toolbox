@@ -42,7 +42,7 @@ export const TOOL_GUIDE_SECTIONS = [
             ['Overview', 'A visual node-based editor for building multi-step data processing pipelines. Drag nodes onto a canvas, connect them with wires, and run the whole chain in one click.'],
             ['Input Nodes', 'Layer Input (use an already-imported layer) or File Import (load a file directly into the pipeline).'],
             ['Transform Nodes', 'Filter Rows, Rename Fields, Delete Fields, Sort, Find & Replace, Deduplicate, and Add Unique ID.'],
-            ['Spatial Nodes', 'Buffer, Simplify, Dissolve, Clip, Union, Combine, Spatial Join, Nearest Join, Intersect, Merge Layers, Difference, Summarize Within, and Split by Geometry.'],
+            ['Spatial Nodes', 'Buffer, Reproject, Simplify, Dissolve, Clip, Union, Combine, Spatial Join, Nearest Join, Intersect, Merge Layers, Difference, Summarize Within, and Split by Geometry.'],
             ['Output Nodes', 'Preview (inspect results in a data table) or Add to Map (push the result back as a new map layer).'],
             ['Examples', 'Pre-built pipelines available from the Examples dropdown to get started quickly.']
         ]
@@ -83,6 +83,7 @@ export const TOOL_GUIDE_SECTIONS = [
         title: 'GIS Tools — Transformation',
         tools: [
             ['Buffer', 'Draw a zone around features at a set distance.'],
+            ['Reproject', 'Convert a layer\'s coordinates so it displays correctly on the map. Creates a new layer in WGS 84.'],
             ['BBox Clip', 'Draw a rectangle on the map and clip all features to that area.'],
             ['Clip to Extent', 'Clip features to the current visible map area.'],
             ['Simplify', 'Reduce vertex count on geometries to shrink file size.'],

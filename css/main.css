@@ -1101,6 +1101,17 @@ textarea { resize: vertical; min-height: 60px; }
 .modal--panel-dock .gis-widget .form-group {
     margin-bottom: 8px;
 }
+.modal--panel-dock .gis-widget .warning-box,
+.modal--panel-dock .gis-widget .info-box {
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    line-height: 1.35;
+}
+.modal--panel-dock .gis-widget .toggle span {
+    font-size: 11px;
+    line-height: 1.35;
+}
 .gis-widget__row {
     display: flex;
     flex-direction: column;

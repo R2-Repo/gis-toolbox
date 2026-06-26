@@ -29,7 +29,8 @@ export function CrsPicker({
     onChange,
     presets,
     allowCustomEpsg = true,
-    placeholder = 'Search EPSG or name…'
+    placeholder = 'Search EPSG or name…',
+    variant = 'full'
 }) {
     const [query, setQuery] = useState('');
     const allPresets = useMemo(() => presets || listPresetCrs(), [presets]);
@@ -61,6 +62,25 @@ export function CrsPicker({
         saveRecent(code);
         onChange?.(code);
     };
+
+    if (variant === 'compact') {
+        return (
+            <div className="form-group">
+                {label ? <label>{label}</label> : null}
+                <select
+                    value={value || ''}
+                    onChange={(e) => handleChange(e.target.value)}
+                    className="crs-picker-select"
+                >
+                    {allPresets.map((preset) => (
+                        <option key={preset.code} value={preset.code}>
+                            {preset.label}
+                        </option>
+                    ))}
+                </select>
+            </div>
+        );
+    }
 
     return (
         <div className="form-group">

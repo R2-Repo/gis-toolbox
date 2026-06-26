@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -8,8 +9,15 @@ export function LineSliceAlongDialog({ onCancel, onSlice }) {
     const [units, setUnits] = useState('feet');
 
     return (
-        <div>
-            <p>Extract a section of a line between two distances measured from the start.</p>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onSlice?.({
+                start: parseFloat(start),
+                stop: parseFloat(stop),
+                units
+            })}
+            runLabel="Slice"
+        >
             <div className="form-group">
                 <label>Start distance</label>
                 <input
@@ -40,19 +48,6 @@ export function LineSliceAlongDialog({ onCancel, onSlice }) {
                     ))}
                 </select>
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    onClick={() => onSlice?.({
-                        start: parseFloat(start),
-                        stop: parseFloat(stop),
-                        units
-                    })}
-                >
-                    Slice
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

@@ -10,7 +10,7 @@ import {
     setActiveLayer, toggleLayerVisibility, reorderLayer, setUIState, toggleAGOLCompat
 } from '../core/state.js';
 import { mergeDatasets, getSelectedFields, tableToSpatial, createSpatialDataset, createTableDataset, analyzeSchema, analyzeTableSchema, isSpatialLayer } from '../core/data-model.js';
-import { isLayerDisplayReady, layerCrsWarning } from '../crs/layer-crs.js';
+import { isLayerDisplayReady, layerCrsWarning, getLayerCrs } from '../crs/layer-crs.js';
 import { importFile, importFiles } from '../import/importer.js';
 import { cancelWorkerParse } from '../import/import-parse-service.js';
 import { convertSpatialDatasetToWorkspace } from '../import/workspace-import.js';
@@ -51,6 +51,7 @@ import {
 
 import { showToast, showErrorToast } from '../ui/toast.js';
 import { showModal, confirm, confirmArcgisLargeImport, showProgressModal } from '../ui/modals.js';
+import { openToolDialog } from '../ui/open-tool-dialog.js';
 import * as transforms from '../dataprep/transforms.js';
 import { applyTemplate } from '../dataprep/template-builder.js';
 import { saveSnapshot, undo as undoHistory, redo as redoHistory, getHistoryState } from '../dataprep/transform-history.js';
@@ -2146,7 +2147,7 @@ async function openBuffer() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `buffer-tool-react-${Date.now()}`;
-        showModal('Buffer', `<div id="${rootId}"></div>`, {
+        openToolDialog('Buffer', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2184,17 +2185,31 @@ async function openReproject() {
     const layer = await requireSpatialLayer();
     if (!layer) return;
 
+    const displayReady = isLayerDisplayReady(layer);
+    const crsWarning = displayReady ? '' : layerCrsWarning(layer);
+
+    let sourceCrs = getLayerCrs(layer);
+    let sourceCrsError = '';
+    try {
+        const { resolveReprojectFromCrs } = await import('../crs/layer-crs.js');
+        sourceCrs = resolveReprojectFromCrs(layer, layer.geojson);
+    } catch (err) {
+        sourceCrsError = err?.message || 'Could not determine the layer coordinate system.';
+    }
+
     const rootId = `reproject-tool-react-${Date.now()}`;
-    showModal('Reproject Layer', `<div id="${rootId}"></div>`, {
+    openToolDialog(displayReady ? 'Reproject Layer' : 'Fix Map Display', rootId, {
         onMount: async (overlay, close) => {
             const root = overlay.querySelector(`#${rootId}`);
             if (!root) return;
 
             const { mountReprojectDialog } = await import('../../react/tools/mountReprojectDialog.jsx');
-            const { getLayerCrs } = await import('../crs/layer-crs.js');
             const mounted = mountReprojectDialog(root, {
                 layerName: layer.name,
-                sourceCrs: getLayerCrs(layer),
+                sourceCrs,
+                displayReady,
+                crsWarning,
+                sourceCrsError,
                 onCancel: () => close(),
                 onApply: async ({ fromCrs, toCrs, name }) => {
                     close();
@@ -2225,7 +2240,7 @@ async function openSimplify() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `simplify-tool-react-${Date.now()}`;
-        showModal('Simplify Geometries', `<div id="${rootId}"></div>`, {
+        openToolDialog('Simplify Geometries', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2265,7 +2280,7 @@ async function openClip() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `clip-extent-react-${Date.now()}`;
-        showModal('Clip to Current Map Extent', `<div id="${rootId}"></div>`, {
+        openToolDialog('Clip to Current Map Extent', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2431,7 +2446,7 @@ async function openDistanceTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `distance-tool-react-${Date.now()}`;
-        showModal('Measure Distance', `<div id="${rootId}"></div>`, {
+        openToolDialog('Measure Distance', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2459,7 +2474,7 @@ async function openBearingTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `bearing-tool-react-${Date.now()}`;
-        showModal('Measure Bearing', `<div id="${rootId}"></div>`, {
+        openToolDialog('Measure Bearing', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2494,7 +2509,7 @@ async function openDestinationTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `destination-tool-react-${Date.now()}`;
-        showModal('Find Destination Point', `<div id="${rootId}"></div>`, {
+        openToolDialog('Find Destination Point', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2525,7 +2540,7 @@ async function openAlongTool() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `along-tool-react-${Date.now()}`;
-        showModal('Point Along Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Point Along Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2572,7 +2587,7 @@ async function openPointToLineDistanceTool() {
 
     
         const rootId = `ptl-distance-react-${Date.now()}`;
-        showModal('Point to Line Distance', `<div id="${rootId}"></div>`, {
+        openToolDialog('Point to Line Distance', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2614,7 +2629,7 @@ async function openBboxClip() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `bbox-clip-react-${Date.now()}`;
-        showModal('BBox Clip', `<div id="${rootId}"></div>`, {
+        openToolDialog('BBox Clip', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2653,7 +2668,7 @@ async function openBezierSpline() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `bezier-spline-react-${Date.now()}`;
-        showModal('Bezier Spline', `<div id="${rootId}"></div>`, {
+        openToolDialog('Bezier Spline', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2688,7 +2703,7 @@ async function openPolygonSmooth() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `polygon-smooth-react-${Date.now()}`;
-        showModal('Polygon Smooth', `<div id="${rootId}"></div>`, {
+        openToolDialog('Polygon Smooth', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2726,7 +2741,7 @@ async function openLineOffset() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `line-offset-react-${Date.now()}`;
-        showModal('Line Offset', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Offset', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2760,7 +2775,7 @@ async function openLineSliceAlong() {
 
     
         const rootId = `line-slice-along-react-${Date.now()}`;
-        showModal('Line Slice Along', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Slice Along', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2796,7 +2811,7 @@ async function openLineSlice() {
 
     
         const rootId = `line-slice-react-${Date.now()}`;
-        showModal('Line Slice Between Points', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Slice Between Points', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2825,30 +2840,6 @@ async function openLineSlice() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-
-    showModal('Line Slice Between Points', '<p>Click two points on the map. The section of the line between those points (snapped to nearest vertices) will be extracted.</p>', {
-        footer: '<button class="btn btn-secondary cancel-btn">Cancel</button><button class="btn btn-primary apply-btn">Pick Points on Map</button>',
-        onMount: (overlay, close) => {
-            overlay.querySelector('.cancel-btn')?.addEventListener('click', () => close());
-            overlay.querySelector('.apply-btn')?.addEventListener('click', async () => {
-                close();
-                const pts = await mapService.startTwoPointPick('Click the start point along the line', 'Click the end point along the line');
-                if (!pts) return;
-                const work = getWorkingFeatures(layer);
-                const line = findFirstLineStringFeature(work.geojson);
-                if (!line) return showToast('No LineString or MultiLineString found', 'warning');
-                try {
-                    const sliced = gisTools.lineSlice(turf.point(pts[0]), turf.point(pts[1]), line);
-                    sliced.properties = { ...line.properties };
-                    const fc = { type: 'FeatureCollection', features: [sliced] };
-                    const result = createSpatialDataset(`${layer.name}_sliced`, fc, { format: 'derived' });
-                    addResultLayer(result);
-                } catch (e) {
-                    showErrorToast(handleError(e, 'GISTools', 'LineSlice'));
-                }
-            });
-        }
-    });
 }
 
 // --- Line Intersect ---
@@ -2868,7 +2859,7 @@ async function openLineIntersect() {
 
     
         const rootId = `line-intersect-react-${Date.now()}`;
-        showModal('Line Intersect', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Intersect', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2914,7 +2905,7 @@ async function openKinks() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `kinks-react-${Date.now()}`;
-        showModal('Find Kinks (Self-Intersections)', `<div id="${rootId}"></div>`, {
+        openToolDialog('Find Kinks (Self-Intersections)', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2949,7 +2940,7 @@ async function openCombine() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `combine-features-react-${Date.now()}`;
-        showModal('Combine Features', `<div id="${rootId}"></div>`, {
+        openToolDialog('Combine Features', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2984,7 +2975,7 @@ async function openUnion() {
     const polyCount = work.geojson.features.filter(f => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')).length;
     
         const rootId = `union-polygons-react-${Date.now()}`;
-        showModal('Union Polygons', `<div id="${rootId}"></div>`, {
+        openToolDialog('Union Polygons', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3018,7 +3009,7 @@ async function openSample() {
     const work = getWorkingFeatures(layer);
 
     const rootId = `sample-react-${Date.now()}`;
-    showModal('Random Sample', `<div id="${rootId}"></div>`, {
+    openToolDialog('Random Sample', rootId, {
         onMount: async (overlay, close) => {
             const root = overlay.querySelector(`#${rootId}`);
             if (!root) return;
@@ -3053,7 +3044,7 @@ async function openExplode() {
     const work = getWorkingFeatures(layer);
 
     const rootId = `explode-react-${Date.now()}`;
-    showModal('Explode Vertices', `<div id="${rootId}"></div>`, {
+    openToolDialog('Explode Vertices', rootId, {
         onMount: async (overlay, close) => {
             const root = overlay.querySelector(`#${rootId}`);
             if (!root) return;
@@ -3090,7 +3081,7 @@ async function openDissolve() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `dissolve-react-${Date.now()}`;
-        showModal('Dissolve', `<div id="${rootId}"></div>`, {
+        openToolDialog('Dissolve', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3126,7 +3117,7 @@ async function openSector() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `sector-react-${Date.now()}`;
-        showModal('Create Sector', `<div id="${rootId}"></div>`, {
+        openToolDialog('Create Sector', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3170,7 +3161,7 @@ async function openNearestPoint() {
 
     
         const rootId = `nearest-point-react-${Date.now()}`;
-        showModal('Nearest Point', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3201,10 +3192,6 @@ async function openNearestPoint() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-
-    const ptLayers = pointLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
 }
 
 // --- Nearest Point on Line ---
@@ -3224,7 +3211,7 @@ async function openNearestPointOnLine() {
 
     
         const rootId = `nearest-point-on-line-react-${Date.now()}`;
-        showModal('Nearest Point on Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point on Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3285,7 +3272,7 @@ async function openNearestPointToLine() {
 
     
         const rootId = `nearest-point-to-line-react-${Date.now()}`;
-        showModal('Nearest Point to Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point to Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3327,7 +3314,7 @@ async function openNearestNeighborAnalysis() {
 
     
         const rootId = `nearest-neighbor-react-${Date.now()}`;
-        showModal('Nearest Neighbor Analysis', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Neighbor Analysis', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3343,13 +3330,18 @@ async function openNearestNeighborAnalysis() {
                             const pattern = p.zscore < -1.65 ? 'Clustered' : (p.zscore > 1.65 ? 'Dispersed' : 'Random');
                             const featureCount = p.numberOfPoints || layer.geojson.features.filter((f) => f.geometry?.type === 'Point').length;
                             const resultsRootId = `nearest-neighbor-results-react-${Date.now()}`;
-                            showModal('Nearest Neighbor Analysis ??? Results', `<div id="${resultsRootId}"></div>`, {
+                            openToolDialog('Nearest Neighbor Analysis — Results', resultsRootId, {
                                 width: '450px',
-                                onMount: async (resultsOverlay) => {
+                                onMount: async (resultsOverlay, close) => {
                                     const resultsRoot = resultsOverlay.querySelector(`#${resultsRootId}`);
                                     if (!resultsRoot) return;
                                     const { mountNearestNeighborResultsDialog } = await import('../../react/tools/mountNearestNeighborResultsDialog.jsx');
-                                    const resultsMounted = mountNearestNeighborResultsDialog(resultsRoot, { pattern, p, featureCount });
+                                    const resultsMounted = mountNearestNeighborResultsDialog(resultsRoot, {
+                                        pattern,
+                                        p,
+                                        featureCount,
+                                        onCancel: () => close()
+                                    });
                                     watchOverlayUnmount(resultsOverlay, () => resultsMounted.unmount?.());
                                 }
                             });
@@ -3389,7 +3381,7 @@ async function openPointsWithinPolygon() {
 
     
         const rootId = `points-within-polygon-react-${Date.now()}`;
-        showModal('Points Within Polygon', `<div id="${rootId}"></div>`, {
+        openToolDialog('Points Within Polygon', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3418,13 +3410,6 @@ async function openPointsWithinPolygon() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-
-    const ptLayers = pointLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
-    const polyLayers = polygonLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
 }
 
 // ============================
@@ -3455,7 +3440,7 @@ async function openCoordConverter() {
 
     
         const rootId = `coord-converter-react-${Date.now()}`;
-        showModal('Coordinate Converter', `<div id="${rootId}"></div>`, {
+        openToolDialog('Coordinate Converter', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -6,8 +7,11 @@ export function DistanceToolDialog({ onCancel, onPick }) {
     const [units, setUnits] = useState('feet');
 
     return (
-        <div>
-            <p>Click two points on the map to measure the straight-line distance between them.</p>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onPick?.(units)}
+            runLabel="Pick Points on Map"
+        >
             <div className="form-group">
                 <label>Units</label>
                 <select value={units} onChange={(e) => setUnits(e.target.value)}>
@@ -18,10 +22,6 @@ export function DistanceToolDialog({ onCancel, onPick }) {
                     ))}
                 </select>
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button className="btn btn-primary apply-btn" onClick={() => onPick?.(units)}>Pick Points on Map</button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

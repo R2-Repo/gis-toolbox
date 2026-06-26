@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -9,8 +10,16 @@ export function SectorDialog({ onCancel, onPickCenter }) {
     const [units, setUnits] = useState('feet');
 
     return (
-        <div>
-            <p>Create a pie-slice shaped polygon from a center point, radius, and two compass bearings.</p>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onPickCenter?.({
+                radius: parseFloat(radius),
+                b1: parseFloat(bearing1),
+                b2: parseFloat(bearing2),
+                units
+            })}
+            runLabel="Pick Center on Map"
+        >
             <div className="form-group">
                 <label>Radius</label>
                 <input
@@ -22,7 +31,7 @@ export function SectorDialog({ onCancel, onPickCenter }) {
                 />
             </div>
             <div className="form-group">
-                <label>Start bearing (degrees, 0=North)</label>
+                <label>Start bearing (°)</label>
                 <input
                     type="number"
                     value={bearing1}
@@ -33,7 +42,7 @@ export function SectorDialog({ onCancel, onPickCenter }) {
                 />
             </div>
             <div className="form-group">
-                <label>End bearing (degrees)</label>
+                <label>End bearing (°)</label>
                 <input
                     type="number"
                     value={bearing2}
@@ -53,20 +62,6 @@ export function SectorDialog({ onCancel, onPickCenter }) {
                     ))}
                 </select>
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    onClick={() => onPickCenter?.({
-                        radius: parseFloat(radius),
-                        b1: parseFloat(bearing1),
-                        b2: parseFloat(bearing2),
-                        units
-                    })}
-                >
-                    Pick Center on Map
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

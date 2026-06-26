@@ -284,19 +284,32 @@ function SplitByGeometryInspector() {
 function ReprojectInspector({ config, onConfigChange }) {
     return (
         <>
-            <InspectorLabel>Source CRS (optional)</InspectorLabel>
-            <CrsPicker
-                label=""
-                value={config.fromCrs || 'EPSG:4326'}
-                onChange={(fromCrs) => onConfigChange({ ...config, fromCrs })}
-            />
-            <InspectorLabel style={{ marginTop: 8 }}>Target CRS</InspectorLabel>
-            <CrsPicker
-                label=""
-                value={config.toCrs || 'EPSG:4326'}
-                onChange={(toCrs) => onConfigChange({ ...config, toCrs })}
-            />
-            <HintText>Leave source empty to use the input layer CRS.</HintText>
+            <InfoText>
+                Reprojects geometries to WGS 84 for map display by default. Expand Advanced to choose
+                a different source or target.
+            </InfoText>
+            <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                    Advanced options
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                    <InspectorLabel>Source CRS</InspectorLabel>
+                    <CrsPicker
+                        label=""
+                        value={config.fromCrs || 'EPSG:4326'}
+                        onChange={(fromCrs) => onConfigChange({ ...config, fromCrs })}
+                        variant="compact"
+                    />
+                    <InspectorLabel style={{ marginTop: 8 }}>Target CRS</InspectorLabel>
+                    <CrsPicker
+                        label=""
+                        value={config.toCrs || 'EPSG:4326'}
+                        onChange={(toCrs) => onConfigChange({ ...config, toCrs })}
+                        variant="compact"
+                    />
+                    <HintText>Source defaults to the input layer CRS if unchanged.</HintText>
+                </div>
+            </details>
         </>
     );
 }

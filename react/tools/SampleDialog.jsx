@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 export function SampleDialog({
     selectionCount = 0,
@@ -15,7 +16,12 @@ export function SampleDialog({
     const canApply = isApplyToValid(applyTo, selectionCount) && Number.isFinite(parsedNum) && parsedNum > 0;
 
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onApply?.({ num: parsedNum, applyTo })}
+            runLabel="Sample"
+            disabled={!canApply}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
@@ -32,17 +38,6 @@ export function SampleDialog({
                     onChange={(e) => setNum(e.target.value)}
                 />
             </div>
-            <p>Randomly pick features from the layer. If the count exceeds available features, all are returned.</p>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!canApply}
-                    onClick={() => onApply?.({ num: parsedNum, applyTo })}
-                >
-                    Sample
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

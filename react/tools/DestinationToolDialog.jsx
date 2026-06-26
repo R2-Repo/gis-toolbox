@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -8,8 +9,15 @@ export function DestinationToolDialog({ onCancel, onPick }) {
     const [units, setUnits] = useState('feet');
 
     return (
-        <div>
-            <p>Click a starting point, then enter a distance and bearing to find the destination point.</p>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onPick?.({
+                dist: parseFloat(distance),
+                brng: parseFloat(bearing),
+                units
+            })}
+            runLabel="Pick Origin on Map"
+        >
             <div className="form-group">
                 <label>Distance</label>
                 <input
@@ -21,7 +29,7 @@ export function DestinationToolDialog({ onCancel, onPick }) {
                 />
             </div>
             <div className="form-group">
-                <label>Bearing (degrees, 0=North, 90=East)</label>
+                <label>Bearing (°)</label>
                 <input
                     type="number"
                     value={bearing}
@@ -41,19 +49,6 @@ export function DestinationToolDialog({ onCancel, onPick }) {
                     ))}
                 </select>
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    onClick={() => onPick?.({
-                        dist: parseFloat(distance),
-                        brng: parseFloat(bearing),
-                        units
-                    })}
-                >
-                    Pick Origin on Map
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

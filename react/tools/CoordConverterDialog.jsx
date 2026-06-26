@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const FORMATS = [
     { id: 'dd', label: 'Decimal Degrees (DD)' },
@@ -26,19 +27,33 @@ export function CoordConverterDialog({
     const [toFormat, setToFormat] = useState('dms');
     const [prefix, setPrefix] = useState('');
 
+    const canConvert = source !== 'fields' || (latField && lonField);
+
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onConvert?.({
+                source,
+                toFormat,
+                prefix,
+                fromFormat,
+                latField,
+                lonField
+            })}
+            runLabel="Convert"
+            disabled={!canConvert}
+        >
             <div className="form-group">
-                <label>Coordinate Source</label>
+                <label>Coordinate source</label>
                 <select value={source} onChange={(e) => setSource(e.target.value)}>
-                    {isSpatial ? <option value="geometry">Feature Geometry (lat/lon from shape)</option> : null}
-                    <option value="fields">Attribute Fields</option>
+                    {isSpatial ? <option value="geometry">Feature geometry</option> : null}
+                    <option value="fields">Attribute fields</option>
                 </select>
             </div>
             {source === 'fields' ? (
-                <div>
+                <>
                     <div className="form-group">
-                        <label>Source Format</label>
+                        <label>Source format</label>
                         <select value={fromFormat} onChange={(e) => setFromFormat(e.target.value)}>
                             {FORMATS.filter((format) => format.id !== 'utm').map((format) => (
                                 <option key={format.id} value={format.id}>{format.label}</option>
@@ -46,7 +61,7 @@ export function CoordConverterDialog({
                         </select>
                     </div>
                     <div className="form-group">
-                        <label>Latitude / Y Field</label>
+                        <label>Lat / Y field</label>
                         <select value={latField} onChange={(e) => setLatField(e.target.value)}>
                             {fields.map((field) => (
                                 <option key={field} value={field}>{field}</option>
@@ -54,17 +69,17 @@ export function CoordConverterDialog({
                         </select>
                     </div>
                     <div className="form-group">
-                        <label>Longitude / X Field</label>
+                        <label>Lon / X field</label>
                         <select value={lonField} onChange={(e) => setLonField(e.target.value)}>
                             {fields.map((field) => (
                                 <option key={field} value={field}>{field}</option>
                             ))}
                         </select>
                     </div>
-                </div>
+                </>
             ) : null}
             <div className="form-group">
-                <label>Convert To</label>
+                <label>Convert to</label>
                 <select value={toFormat} onChange={(e) => setToFormat(e.target.value)}>
                     {FORMATS.map((format) => (
                         <option key={format.id} value={format.id}>{format.label}</option>
@@ -72,7 +87,7 @@ export function CoordConverterDialog({
                 </select>
             </div>
             <div className="form-group">
-                <label>Output Field Prefix (optional)</label>
+                <label>Output prefix (optional)</label>
                 <input
                     type="text"
                     value={prefix}
@@ -80,27 +95,6 @@ export function CoordConverterDialog({
                     placeholder="Auto (e.g. DMS, UTM)"
                 />
             </div>
-            <div className="info-box text-xs">
-                Adds new attribute fields with the converted coordinates.<br />
-                Examples: <code>DMS_lat</code>, <code>DMS_lon</code>, <code>UTM_zone</code>, <code>UTM_easting</code>, <code>UTM_northing</code>
-            </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    onClick={() => onConvert?.({
-                        source,
-                        toFormat,
-                        prefix,
-                        fromFormat,
-                        latField,
-                        lonField
-                    })}
-                    disabled={source === 'fields' && (!latField || !lonField)}
-                >
-                    Convert
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

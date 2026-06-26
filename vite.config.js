@@ -54,6 +54,10 @@ function createManualChunks(id) {
 
 export default defineConfig({
   base: './',
+  server: {
+    port: 5174,
+    strictPort: true
+  },
   plugins: [
     react(),
     pipelinesStaticPlugin(),
