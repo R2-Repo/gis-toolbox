@@ -15,6 +15,21 @@ function buildFenceEnvelope(bbox) {
     };
 }
 
+const ASYNC_MAP_RPC_METHODS = [
+    'startPointPick',
+    'startTwoPointPick',
+    'startRouteTwoPointPick',
+    'startRectangleDraw',
+    'startSketchPolygon',
+    'startSketchPolyline',
+    'startSketchCirclePolygon'
+];
+
+function cloneJson(value) {
+    if (value == null) return value;
+    return JSON.parse(JSON.stringify(value));
+}
+
 /**
  * @param {object} mapApi - mapService-shaped API object.
  * @param {object} coordinator - dualScreenCoordinator-shaped object.
@@ -35,21 +50,41 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         syncLayerOrder: mapApi.syncLayerOrder?.bind(mapApi),
         refreshLayerData: mapApi.refreshLayerData?.bind(mapApi),
         setLayerStyle: mapApi.setLayerStyle?.bind(mapApi),
+        restyleLayer: mapApi.restyleLayer?.bind(mapApi),
         fitToAll: mapApi.fitToAll?.bind(mapApi),
         fitToLayers: mapApi.fitToLayers?.bind(mapApi),
+        fitBounds: mapApi.fitBounds?.bind(mapApi),
         setBasemap: mapApi.setBasemap?.bind(mapApi),
         enable3D: mapApi.enable3D?.bind(mapApi),
         disable3D: mapApi.disable3D?.bind(mapApi),
         getBounds: mapApi.getBounds?.bind(mapApi),
         resize: mapApi.resize?.bind(mapApi),
         getMap: mapApi.getMap?.bind(mapApi),
-        getImportFenceEsriEnvelope: mapApi.getImportFenceEsriEnvelope?.bind(mapApi)
+        getImportFenceEsriEnvelope: mapApi.getImportFenceEsriEnvelope?.bind(mapApi),
+        showTempFeature: mapApi.showTempFeature?.bind(mapApi),
+        showRouteMilepostPreview: mapApi.showRouteMilepostPreview?.bind(mapApi),
+        showProjectStationingPreview: mapApi.showProjectStationingPreview?.bind(mapApi),
+        removeTempFeature: mapApi.removeTempFeature?.bind(mapApi),
+        clearTempFeatures: mapApi.clearTempFeatures?.bind(mapApi),
+        cancelInteraction: mapApi.cancelInteraction?.bind(mapApi)
     };
+
+    ASYNC_MAP_RPC_METHODS.forEach((method) => {
+        const original = originals[method] ?? mapApi[method]?.bind(mapApi);
+        originals[method] = original;
+        mapApi[method] = function dualScreenMapRpc(...args) {
+            if (!coordinator.isActive) return original?.(...args);
+            return coordinator.invokeMapRpc(method, args);
+        };
+    });
 
     mapApi.addLayer = function addLayer(dataset, colorIndex = 0, options = {}) {
         if (!coordinator.isActive) return originals.addLayer?.(dataset, colorIndex, options);
+        if (options.style) originals.setLayerStyle?.(dataset.id, options.style);
         coordinator.broadcastLayerAdd(dataset, colorIndex, options);
-        if (options.fit) coordinator.broadcastFit('fitLayer', { layerId: dataset?.id });
+        if (options.fit && dataset?.id) {
+            coordinator.broadcastFit('fitLayers', { layerIds: [dataset.id] });
+        }
         return undefined;
     };
 
@@ -77,6 +112,21 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         return result;
     };
 
+    mapApi.restyleLayer = function restyleLayer(layerId, dataset, style) {
+        originals.setLayerStyle?.(layerId, style);
+        if (!coordinator.isActive) return originals.restyleLayer?.(layerId, dataset, style);
+        coordinator.broadcastMapCmd('restyleLayer', {
+            layerId,
+            dataset: dataset ? {
+                id: dataset.id,
+                geojson: cloneJson(dataset.geojson)
+            } : null,
+            style: cloneJson(style)
+        });
+        coordinator.syncLayersChanged();
+        return undefined;
+    };
+
     mapApi.refreshLayerData = function refreshLayerData(dataset) {
         if (!coordinator.isActive) return originals.refreshLayerData?.(dataset);
         coordinator.syncLayersChanged();
@@ -92,6 +142,12 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
     mapApi.fitToLayers = function fitToLayers(layerIds) {
         if (!coordinator.isActive) return originals.fitToLayers?.(layerIds);
         coordinator.broadcastFit('fitLayers', { layerIds });
+        return undefined;
+    };
+
+    mapApi.fitBounds = function fitBounds(bounds, options = {}) {
+        if (!coordinator.isActive) return originals.fitBounds?.(bounds, options);
+        coordinator.broadcastFit('fitBounds', { bounds, options });
         return undefined;
     };
 
@@ -121,7 +177,6 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         return coordinator.getBounds();
     };
 
-    // Safe in both modes: map-manager resize already no-ops when no map exists.
     mapApi.resize = function resize() {
         return originals.resize?.();
     };
@@ -138,6 +193,42 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         return originals.getImportFenceEsriEnvelope?.();
     };
 
+    mapApi.showTempFeature = function showTempFeature(geojson, duration = 10000) {
+        if (!coordinator.isActive) return originals.showTempFeature?.(geojson, duration);
+        coordinator.broadcastMapCmd('showTempFeature', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showRouteMilepostPreview = function showRouteMilepostPreview(geojson, duration = 0) {
+        if (!coordinator.isActive) return originals.showRouteMilepostPreview?.(geojson, duration);
+        coordinator.broadcastMapCmd('showRouteMilepostPreview', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showProjectStationingPreview = function showProjectStationingPreview(geojson, duration = 0) {
+        if (!coordinator.isActive) return originals.showProjectStationingPreview?.(geojson, duration);
+        coordinator.broadcastMapCmd('showProjectStationingPreview', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.removeTempFeature = function removeTempFeature(entry) {
+        if (!coordinator.isActive) return originals.removeTempFeature?.(entry);
+        coordinator.broadcastMapCmd('clearTempFeatures');
+        return undefined;
+    };
+
+    mapApi.clearTempFeatures = function clearTempFeatures() {
+        if (!coordinator.isActive) return originals.clearTempFeatures?.();
+        coordinator.broadcastMapCmd('clearTempFeatures');
+        return undefined;
+    };
+
+    mapApi.cancelInteraction = function cancelInteraction() {
+        if (!coordinator.isActive) return originals.cancelInteraction?.();
+        coordinator.broadcastMapCmd('cancelInteraction');
+        return undefined;
+    };
+
     return function uninstallDualScreenMapServiceDecorator() {
         Object.entries(originals).forEach(([name, fn]) => {
             if (typeof fn === 'function') {
@@ -146,4 +237,3 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         });
     };
 }
-

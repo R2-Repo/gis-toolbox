@@ -26,6 +26,9 @@ export const MessageType = {
     POPUP_ACTION: 'POPUP_ACTION',
     CTX_CMD: 'CTX_CMD',
     TOAST: 'TOAST',
+    MAP_RPC: 'MAP_RPC',
+    MAP_RPC_RESULT: 'MAP_RPC_RESULT',
+    MAP_CMD: 'MAP_CMD',
     BYE: 'BYE',
     PING: 'PING',
     PONG: 'PONG'
@@ -71,12 +74,21 @@ export function serializeLayerForSync(layer, index) {
         visible: layer.visible !== false,
         geojson: layer.geojson ? JSON.parse(JSON.stringify(layer.geojson)) : null,
         style: layer._mapStyle || null,
+        mapLabels: layer._mapLabels ?? null,
+        kmlExport: layer._kmlExport ?? null,
         colorIndex: index,
         source: layer.source,
         scaleRangeEnabled: !!layer.scaleRangeEnabled,
         minScale: layer.minScale ?? null,
         maxScale: layer.maxScale ?? null
     };
+}
+
+/** Strip non-serializable values (e.g. callbacks) from map RPC args. */
+export function serializeMapRpcArgs(args = []) {
+    return JSON.parse(JSON.stringify(args, (_key, value) => (
+        typeof value === 'function' ? undefined : value
+    )));
 }
 
 export function buildSnapshotPayload({ layers, viewport, basemap, is3d, layerStyles, activeLayerId }) {

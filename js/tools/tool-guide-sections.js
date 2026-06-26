@@ -103,7 +103,6 @@ export const TOOL_GUIDE_SECTIONS = [
             ['Combine', 'Merge all features of the same type into one multi-feature.'],
             ['Union', 'Merge all polygons into a single unified shape.'],
             ['Dissolve', 'Merge polygons that share the same attribute value.'],
-            ['Points in Polygon', 'Find which points fall inside which polygons.'],
             ['Nearest Point', 'Click the map to find the closest feature in a point layer.'],
             ['Nearest Pt on Line', 'Click near a line to snap to the closest point on it.'],
             ['Nearest Pt to Line', 'Find which point in a layer is closest to a line.'],

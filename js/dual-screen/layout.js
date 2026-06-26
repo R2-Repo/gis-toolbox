@@ -1,6 +1,7 @@
 /**
  * Dual Screen Mode — primary layout helpers
  */
+import { syncWidgetPanelDockReserve } from '../ui/widget-modal-placement.js';
 
 /** @returns {string} innerHTML for center-panel placeholder */
 export function buildDualScreenPlaceholderMarkup() {
@@ -74,5 +75,24 @@ export function syncDualScreenHeaderButton(btn, active) {
     const label = btn.querySelector('.btn-label') || btn.querySelector('span:last-child');
     if (label) {
         label.textContent = active ? 'Exit Dual Screen' : 'Dual Screen';
+    }
+}
+
+/**
+ * Reset primary-window chrome when dual-screen toggles (layout, header, panel widths).
+ * @param {boolean} active
+ * @param {Document} [doc]
+ */
+export function syncDualScreenPrimaryUi(active, doc = document) {
+    applyDualScreenDocumentLayout(active, doc);
+    syncDualScreenHeaderButton(doc.getElementById('btn-dual-screen'), active);
+    doc.querySelectorAll('[data-dual-screen-toggle]').forEach((el) => {
+        el.classList.toggle('active', active);
+        if (el.id === 'wf-dual-screen') {
+            el.textContent = active ? '🖥️ Exit Dual Screen' : '🖥️ Dual Screen';
+        }
+    });
+    if (!active) {
+        syncWidgetPanelDockReserve(doc.querySelector('.panel-right'), 0);
     }
 }

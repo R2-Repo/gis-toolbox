@@ -641,21 +641,6 @@ export function nearestNeighborAnalysis(dataset) {
     return turf.nearestNeighborAnalysis(fc);
 }
 
-/**
- * Find all points within polygon(s)
- */
-export function pointsWithinPolygon(pointsDataset, polygonsDataset) {
-    if (typeof turf === 'undefined') throw new Error('Turf.js not loaded');
-    const points = pointsDataset.geojson;
-    const polygons = polygonsDataset.geojson;
-    const result = turf.pointsWithinPolygon(points, polygons);
-    return createSpatialDataset(
-        `${pointsDataset.name}_within_${polygonsDataset.name}`,
-        result,
-        { format: 'derived' }
-    );
-}
-
 // ============================
 // Multi-Layer Spatial Analysis
 // ============================
@@ -1135,7 +1120,7 @@ export default {
     lineOffsetFeatures, lineSliceAlong, lineSlice, createSector,
     lineIntersect, findKinks, combineFeatures, unionFeatures,
     nearestPoint, nearestPointOnLine, nearestPointToLine,
-    nearestNeighborAnalysis, pointsWithinPolygon,
+    nearestNeighborAnalysis,
     spatialJoinPointsInPolygons, nearestJoin, intersectLayers,
     mergeLayers, differenceLayers, summarizeWithin,
     sampleFeatures, explodeFeatures

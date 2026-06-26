@@ -37,13 +37,6 @@ export const MAP_GIS_TOOLS = [
     { id: 'combine', action: 'openCombine', category: 'combine-analyze', label: '🔗 Combine', tip: 'Merge all features of the same type into one multi-feature.' },
     { id: 'union', action: 'openUnion', category: 'combine-analyze', label: '🔶 Union', tip: 'Merge all polygons into a single shape.' },
     { id: 'dissolve', action: 'openDissolve', category: 'combine-analyze', label: '🫧 Dissolve', tip: 'Merge polygons by a shared attribute, or merge all when no field is chosen — creates a new layer.' },
-    {
-        id: 'points-in-poly',
-        action: 'openPointsWithinPolygon',
-        category: 'combine-analyze',
-        label: '📍🔷 Points in Poly (filter)',
-        tip: 'Filter to points inside polygons — creates a new layer. (Pipeline Spatial Join copies polygon attributes onto points instead.)'
-    },
     { id: 'nearest-point', action: 'openNearestPoint', category: 'combine-analyze', label: '🎯 Nearest Pt', tip: 'Click the map to find the closest feature in a point layer.' },
     { id: 'nearest-on-line', action: 'openNearestPointOnLine', category: 'combine-analyze', label: '📍→ Snap', tip: 'Click near a line to find the closest point on that line.' },
     { id: 'nearest-point-to-line', action: 'openNearestPointToLine', category: 'combine-analyze', label: '📍↔ Pt to Ln', tip: 'Find which point feature is closest to a given line.' },
@@ -70,7 +63,6 @@ export const V1_MAP_TOOL_IDS = new Set([
     'dissolve',
     'line-offset',
     'reproject',
-    'points-in-poly',
     'union',
     'kinks',
     'sample',

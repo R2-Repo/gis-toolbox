@@ -10,7 +10,7 @@ import {
     setActiveLayer, toggleLayerVisibility, reorderLayer, setUIState, toggleAGOLCompat
 } from '../core/state.js';
 import { mergeDatasets, getSelectedFields, tableToSpatial, createSpatialDataset, createTableDataset, analyzeSchema, analyzeTableSchema, isSpatialLayer } from '../core/data-model.js';
-import { isLayerDisplayReady, layerCrsWarning, getLayerCrs } from '../crs/layer-crs.js';
+import { isLayerDisplayReady, layerCrsWarning, getLayerCrs, resolveReprojectFromCrs } from '../crs/layer-crs.js';
 import { importFile, importFiles } from '../import/importer.js';
 import { cancelWorkerParse } from '../import/import-parse-service.js';
 import { convertSpatialDatasetToWorkspace } from '../import/workspace-import.js';
@@ -44,10 +44,6 @@ import {
     RELOAD_REMINDER_MESSAGE,
     consumeDualScreenReloadReminder
 } from '../dual-screen/storage-hint.js';
-import {
-    applyDualScreenDocumentLayout,
-    syncDualScreenHeaderButton
-} from '../dual-screen/layout.js';
 
 import { showToast, showErrorToast } from '../ui/toast.js';
 import { showModal, confirm, confirmArcgisLargeImport, showProgressModal } from '../ui/modals.js';
@@ -1257,7 +1253,13 @@ export function setupAppWiring() {
                 refreshUI();
             }
         });
+        _workflowOverlay.warmup();
     }
+
+    document.addEventListener('click', (event) => {
+        if (!closestFromEvent(event, '#btn-workflow')) return;
+        _workflowOverlay?.toggle();
+    });
     
     setupDualScreenMode();
 
@@ -1465,14 +1467,6 @@ function setupDualScreenMode() {
     });
 
     dualScreenCoordinator.onStateChange((active) => {
-        applyDualScreenLayout(active);
-        syncDualScreenHeaderButton(btn, active);
-        document.querySelectorAll('[data-dual-screen-toggle]').forEach(el => {
-            el.classList.toggle('active', active);
-            if (el.id === 'wf-dual-screen') {
-                el.textContent = active ? '???? Exit Dual Screen' : '???? Dual Screen';
-            }
-        });
         if (active && _fenceBbox) {
             dualScreenCoordinator.setFenceBbox(_fenceBbox);
             setTimeout(() => {
@@ -1512,10 +1506,6 @@ function setupDualScreenMode() {
         && consumeDualScreenReloadReminder(sessionStorage, window._dualScreenReloadState ||= {})) {
         showToast(RELOAD_REMINDER_MESSAGE, 'info', { duration: 8000 });
     }
-}
-
-function applyDualScreenLayout(active) {
-    applyDualScreenDocumentLayout(active);
 }
 
 // ============================
@@ -2191,7 +2181,6 @@ async function openReproject() {
     let sourceCrs = getLayerCrs(layer);
     let sourceCrsError = '';
     try {
-        const { resolveReprojectFromCrs } = await import('../crs/layer-crs.js');
         sourceCrs = resolveReprojectFromCrs(layer, layer.geojson);
     } catch (err) {
         sourceCrsError = err?.message || 'Could not determine the layer coordinate system.';
@@ -3347,63 +3336,6 @@ async function openNearestNeighborAnalysis() {
                             });
                         } catch (e) {
                             showErrorToast(handleError(e, 'GISTools', 'NearestNeighborAnalysis'));
-                        }
-                    }
-                });
-                watchOverlayUnmount(overlay, () => mounted.unmount?.());
-            }
-        });
-}
-
-// --- Points Within Polygon ---
-async function openPointsWithinPolygon() {
-    if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
-    const pointLayerDefs = getLayers()
-        .filter((layer) =>
-            layer.type === 'spatial'
-            && layer.geojson.features.some((f) => f.geometry && f.geometry.type === 'Point'))
-        .map((layer) => ({
-            id: layer.id,
-            name: layer.name,
-            count: layer.geojson.features.length
-        }));
-    const polygonLayerDefs = getLayers()
-        .filter((layer) =>
-            layer.type === 'spatial'
-            && layer.geojson.features.some((f) =>
-                f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')))
-        .map((layer) => ({
-            id: layer.id,
-            name: layer.name,
-            count: layer.geojson.features.length
-        }));
-    if (pointLayerDefs.length === 0 || polygonLayerDefs.length === 0) return showToast('Need both a point layer and a polygon layer', 'warning');
-
-    
-        const rootId = `points-within-polygon-react-${Date.now()}`;
-        openToolDialog('Points Within Polygon', rootId, {
-            onMount: async (overlay, close) => {
-                const root = overlay.querySelector(`#${rootId}`);
-                if (!root) return;
-
-                const { mountPointsWithinPolygonDialog } = await import('../../react/tools/mountPointsWithinPolygonDialog.jsx');
-                const mounted = mountPointsWithinPolygonDialog(root, {
-                    pointLayers: pointLayerDefs,
-                    polygonLayers: polygonLayerDefs,
-                    onCancel: () => close(),
-                    onFind: ({ pointLayerId, polygonLayerId }) => {
-                        const ptsLayer = getLayers().find((layer) => layer.id === pointLayerId);
-                        const polyLayer = getLayers().find((layer) => layer.id === polygonLayerId);
-                        close();
-                        if (!ptsLayer || !polyLayer) return;
-                        try {
-                            const result = gisTools.pointsWithinPolygon(ptsLayer, polyLayer);
-                            addResultLayer(result);
-                            const total = ptsLayer.geojson.features.length;
-                            const inside = result.geojson.features.length;
-                            showToast(`${inside} of ${total} points are within the polygon(s)`, 'success');
-                        } catch (e) {
-                            showErrorToast(handleError(e, 'GISTools', 'PointsWithinPolygon'));
                         }
                     }
                 });
@@ -4694,7 +4626,6 @@ const APP_ACTIONS = {
     openNearestPointOnLine,
     openNearestPointToLine,
     openNearestNeighborAnalysis,
-    openPointsWithinPolygon,
     openPhotoMapper: openPhotoMapper,
     openArcGISImporter: openArcGISImporter,
     startImportFence,

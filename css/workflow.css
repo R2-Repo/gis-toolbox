@@ -36,8 +36,12 @@
     pointer-events: all;
 }
 
-#wf-overlay-root:not(:has(.wf-overlay.visible)) {
+#wf-overlay-root {
     pointer-events: none;
+}
+
+#wf-overlay-root:has(.wf-overlay.visible) {
+    pointer-events: auto;
 }
 
 .wf-overlay:not(.visible) * {

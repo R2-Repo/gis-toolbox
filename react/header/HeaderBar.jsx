@@ -8,7 +8,6 @@ export function HeaderBar({
     onUndo,
     onRedo,
     onMergeLayers,
-    onWorkflow,
     onBasemapChange,
     onDimensionChange,
     onLogs,
@@ -49,7 +48,7 @@ export function HeaderBar({
                 <button className={`btn btn-secondary btn-sm${showMerge ? '' : ' hidden'}`} id="btn-merge" onClick={() => onMergeLayers?.()}>Merge Layers</button>
                 <div className="header-sep"></div>
                 <div className="header-pipeline-cluster">
-                    <button className="btn btn-secondary btn-sm" id="btn-workflow" title="Data Pipeline Editor" onClick={() => onWorkflow?.()}>
+                    <button type="button" className="btn btn-secondary btn-sm" id="btn-workflow" title="Data Pipeline Editor">
                         <span className="btn-icon-text" aria-hidden="true">
                             <PipelineIcon className="btn-icon-svg" size={14} />
                         </span>

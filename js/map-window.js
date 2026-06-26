@@ -60,6 +60,8 @@ function applySnapshot(payload) {
             dataset.maxScale = entry.maxScale ?? null;
         }
         if (entry.style) mapService.setLayerStyle(entry.id, entry.style);
+        if (entry.mapLabels) dataset._mapLabels = entry.mapLabels;
+        if (entry.kmlExport) dataset._kmlExport = entry.kmlExport;
         mapService.addLayer(dataset, i, { fit: false });
     });
 
@@ -85,7 +87,7 @@ function applySnapshot(payload) {
 }
 
 function applyLayerAdd(payload) {
-    const { dataset, colorIndex, fit } = payload || {};
+    const { dataset, colorIndex, fit, style } = payload || {};
     if (!dataset?.geojson) return;
     const layer = createSpatialDataset(dataset.name, dataset.geojson, dataset.source || { format: 'sync' });
     layer.id = dataset.id;
@@ -95,8 +97,12 @@ function applyLayerAdd(payload) {
         layer.minScale = dataset.minScale ?? null;
         layer.maxScale = dataset.maxScale ?? null;
     }
+    if (dataset.mapLabels) layer._mapLabels = dataset.mapLabels;
+    if (dataset.kmlExport) layer._kmlExport = dataset.kmlExport;
+    if (style) mapService.setLayerStyle(layer.id, style);
     mapService.removeLayer(layer.id);
     mapService.addLayer(layer, colorIndex ?? 0, { fit: !!fit });
+    if (style) mapService.restyleLayer?.(layer.id, layer, style);
 }
 
 function applyLayerRemove(payload) {
@@ -118,6 +124,10 @@ function applyViewport(payload) {
     }
     if (payload.command === 'fitLayers' && payload.layerIds?.length) {
         mapService.fitToLayers(payload.layerIds);
+        return;
+    }
+    if (payload.command === 'fitBounds' && payload.bounds) {
+        mapService.fitBounds(payload.bounds, payload.options || {});
         return;
     }
     if (payload.center) {
@@ -157,6 +167,52 @@ function onMapReady() {
     });
 }
 
+function applyMapCmd(payload) {
+    const { action, geojson, duration, layerId, dataset, style } = payload || {};
+    switch (action) {
+        case 'showTempFeature':
+            mapService.showTempFeature(geojson, duration ?? 10000);
+            break;
+        case 'showRouteMilepostPreview':
+            mapService.showRouteMilepostPreview?.(geojson, duration ?? 0);
+            break;
+        case 'showProjectStationingPreview':
+            mapService.showProjectStationingPreview?.(geojson, duration ?? 0);
+            break;
+        case 'clearTempFeatures':
+            mapService.clearTempFeatures?.();
+            break;
+        case 'cancelInteraction':
+            mapService.cancelInteraction?.();
+            break;
+        case 'restyleLayer':
+            if (layerId && style) {
+                mapService.setLayerStyle(layerId, style);
+                if (dataset) mapService.restyleLayer?.(layerId, dataset, style);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+async function handleMapRpc(payload, post) {
+    const { requestId, method, args = [] } = payload || {};
+    try {
+        const fn = mapService[method];
+        if (typeof fn !== 'function') {
+            throw new Error(`Unknown map method: ${method}`);
+        }
+        const result = await fn.apply(mapService, args);
+        post(MessageType.MAP_RPC_RESULT, { requestId, result });
+    } catch (err) {
+        post(MessageType.MAP_RPC_RESULT, {
+            requestId,
+            error: err?.message || String(err)
+        });
+    }
+}
+
 function handleMessage(msg) {
     switch (msg.type) {
         case MessageType.SNAPSHOT:
@@ -187,6 +243,12 @@ function handleMessage(msg) {
             break;
         case MessageType.SELECTION:
             applyRemoteSelection(msg.payload);
+            break;
+        case MessageType.MAP_RPC:
+            void handleMapRpc(msg.payload, post);
+            break;
+        case MessageType.MAP_CMD:
+            applyMapCmd(msg.payload);
             break;
         case MessageType.BYE:
             window.close();

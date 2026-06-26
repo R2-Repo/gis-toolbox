@@ -75,7 +75,7 @@ function fitPreviewBounds(ctx, geojson) {
     if (typeof turf === 'undefined' || !geojson?.features?.length) return;
     try {
         const bbox = turf.bbox(geojson);
-        ctx.mapService.map?.fitBounds(
+        ctx.mapService.fitBounds?.(
             [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
             { padding: 48, maxZoom: 14, duration: 800 }
         );

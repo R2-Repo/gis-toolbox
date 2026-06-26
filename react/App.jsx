@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import logger from '../js/core/logger.js';
 import mapService from '../js/map/map-service.js';
 import { setExportMapManager } from '../js/export/exporter.js';
@@ -11,7 +11,6 @@ import {
     setupAppWiring,
     setupDragDrop,
     setupLogsPanel,
-    getWorkflowOverlay,
     openImportFlow,
     handleUndo,
     handleRedo,
@@ -170,7 +169,6 @@ function AppShell() {
                     onUndo={handleUndo}
                     onRedo={handleRedo}
                     onMergeLayers={handleMergeLayers}
-                    onWorkflow={() => getWorkflowOverlay()?.toggle()}
                     onBasemapChange={onBasemapChange}
                     onDimensionChange={onDimensionChange}
                     onLogs={toggleLogs}
@@ -332,7 +330,7 @@ export function App() {
     const toastHostRef = useRef(null);
     const bootRanRef = useRef(false);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         installDualScreenMapServiceDecorator(mapService, dualScreenCoordinator);
         logger.info('App', 'Initializing GIS Toolbox');
 

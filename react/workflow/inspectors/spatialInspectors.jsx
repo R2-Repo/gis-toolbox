@@ -134,8 +134,8 @@ function SpatialJoinInspector({ node, config, onConfigChange, engine, getLayers 
             <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
                 For each <strong>Point</strong>, finds the containing <strong>Polygon</strong>
                 {' '}and copies its attributes to the point. Creates a new layer on the output port
-                (does not modify source layers). Map <strong>Points in Poly (filter)</strong> only
-                keeps matching points without joining attributes.
+                (does not modify source layers). Use <strong>Find Features in Area</strong> (GIS Widgets)
+                to filter points inside polygons without joining attributes.
             </p>
             <InspectorLabel>Fields to Join</InspectorLabel>
             <InspectorInput

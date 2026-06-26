@@ -106,6 +106,11 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         fitToLayers(layerIds) {
             return mapAdapter.fitToLayers(layerIds);
         },
+        fitBounds(bounds, options = {}) {
+            const map = mapAdapter.getMap();
+            if (!map) return;
+            return map.fitBounds(bounds, options);
+        },
         getBounds() {
             return mapAdapter.getBounds();
         },

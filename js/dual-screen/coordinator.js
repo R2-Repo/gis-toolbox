@@ -8,10 +8,11 @@ import {
     MessageType,
     createMessage,
     buildSnapshotPayload,
-    boundsFromViewportPayload
+    boundsFromViewportPayload,
+    serializeMapRpcArgs
 } from './protocol.js';
 import { setDualScreenActiveHint } from './storage-hint.js';
-import { scheduleMapResizeAfterLayout } from './layout.js';
+import { scheduleMapResizeAfterLayout, syncDualScreenPrimaryUi } from './layout.js';
 import {
     applySelectionPayload,
     installPrimarySelectionSync,
@@ -34,7 +35,8 @@ class DualScreenCoordinator {
         this._lastViewport = null;
         this._lastBounds = null;
         this._secondaryReady = false;
-        this._onStateChange = null;
+        /** @type {Set<(active: boolean) => void>} */
+        this._stateListeners = new Set();
         this._handlers = {};
         /** @type {[number, number, number, number] | null} */
         this._fenceBbox = null;
@@ -47,14 +49,24 @@ class DualScreenCoordinator {
         this._selectionSyncInbound = false;
         /** @type {(() => void) | null} */
         this._selectionSyncTeardown = null;
+        this._rpcSeq = 0;
+        /** @type {Map<string, { resolve: Function, reject: Function, timeout: ReturnType<typeof setTimeout> }>} */
+        this._rpcPending = new Map();
     }
 
     setFenceBbox(bbox) {
         this._fenceBbox = bbox || null;
     }
 
+    /**
+     * Subscribe to dual-screen active state changes.
+     * @param {(active: boolean) => void} fn
+     * @returns {() => void} unsubscribe
+     */
     onStateChange(fn) {
-        this._onStateChange = fn;
+        if (typeof fn !== 'function') return () => {};
+        this._stateListeners.add(fn);
+        return () => { this._stateListeners.delete(fn); };
     }
 
     /** @param {Partial<Record<string, Function>>} handlers */
@@ -63,7 +75,12 @@ class DualScreenCoordinator {
     }
 
     _notify() {
-        this._onStateChange?.(this.isActive);
+        syncDualScreenPrimaryUi(this.isActive);
+        for (const fn of this._stateListeners) {
+            try { fn(this.isActive); } catch (err) {
+                console.warn('[DualScreen] state listener failed', err);
+            }
+        }
     }
 
     _isMobile() {
@@ -131,17 +148,18 @@ class DualScreenCoordinator {
         this._pendingActivation = false;
         this._clearActivateTimeout();
 
+        // Tear down primary map before isActive — getMap() returns null once dual-screen is active.
+        if (mapService.getMap()) {
+            this._lastViewport = this._captureViewport();
+            mapService.destroy();
+        }
+
         this.isActive = true;
         setDualScreenActiveHint(typeof sessionStorage !== 'undefined' ? sessionStorage : null, true);
         this._secondaryReady = false;
 
         if (!this._channel) {
             this._channel = new DualScreenChannel('primary', (msg) => this._handleMessage(msg));
-        }
-
-        if (mapService.getMap()) {
-            this._lastViewport = this._captureViewport();
-            mapService.destroy();
         }
 
         this._startPoll();
@@ -188,6 +206,7 @@ class DualScreenCoordinator {
             this.isActive = false;
             this._secondaryReady = false;
             this._lastBounds = null;
+            this._rejectAllMapRpc('Dual screen deactivated');
             setDualScreenActiveHint(typeof sessionStorage !== 'undefined' ? sessionStorage : null, false);
 
             // Restore normal 3-panel layout before MapLibre init so canvas size is correct.
@@ -326,6 +345,9 @@ class DualScreenCoordinator {
                     this._applyRemoteSelection(msg.payload);
                 }
                 break;
+            case MessageType.MAP_RPC_RESULT:
+                this._resolveMapRpcResult(msg.payload);
+                break;
             case MessageType.BYE:
                 this.deactivate({ fromSecondaryBye: true });
                 break;
@@ -355,16 +377,22 @@ class DualScreenCoordinator {
 
     broadcastLayerAdd(dataset, colorIndex, options = {}) {
         if (!this._channel) return;
+        const style = options.style
+            ?? mapService.getLayerStyles()?.get?.(dataset.id)
+            ?? null;
         this._channel.post(createMessage('primary', MessageType.LAYER_ADD, {
             dataset: {
                 id: dataset.id,
                 name: dataset.name,
                 type: dataset.type,
                 visible: dataset.visible !== false,
-                geojson: dataset.geojson ? JSON.parse(JSON.stringify(dataset.geojson)) : null
+                geojson: dataset.geojson ? JSON.parse(JSON.stringify(dataset.geojson)) : null,
+                mapLabels: dataset._mapLabels ?? null,
+                kmlExport: dataset._kmlExport ?? null
             },
             colorIndex,
-            fit: !!options.fit
+            fit: !!options.fit,
+            style: style ? JSON.parse(JSON.stringify(style)) : null
         }));
     }
 
@@ -400,6 +428,57 @@ class DualScreenCoordinator {
     broadcastSelection(payload) {
         if (!this._channel) return;
         this._channel.post(createMessage('primary', MessageType.SELECTION, payload));
+    }
+
+    /**
+     * Run an async mapService method on the secondary map window.
+     * @param {string} method
+     * @param {unknown[]} [args]
+     * @param {{ focusMap?: boolean, timeoutMs?: number }} [options]
+     */
+    invokeMapRpc(method, args = [], options = {}) {
+        if (!this.isActive || !this._channel) {
+            return Promise.reject(new Error('Dual screen map is not active'));
+        }
+        return new Promise((resolve, reject) => {
+            const requestId = `rpc-${Date.now()}-${++this._rpcSeq}`;
+            const timeout = setTimeout(() => {
+                if (!this._rpcPending.has(requestId)) return;
+                this._rpcPending.delete(requestId);
+                reject(new Error(`Map interaction timed out (${method})`));
+            }, options.timeoutMs ?? 600000);
+
+            this._rpcPending.set(requestId, { resolve, reject, timeout });
+            if (options.focusMap !== false) this.focusMapWindow();
+            this._channel.post(createMessage('primary', MessageType.MAP_RPC, {
+                requestId,
+                method,
+                args: serializeMapRpcArgs(args)
+            }));
+        });
+    }
+
+    broadcastMapCmd(action, data = {}) {
+        if (!this._channel) return;
+        if (this.isActive) this.focusMapWindow();
+        this._channel.post(createMessage('primary', MessageType.MAP_CMD, { action, ...data }));
+    }
+
+    _resolveMapRpcResult(payload) {
+        const pending = payload?.requestId ? this._rpcPending.get(payload.requestId) : null;
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        this._rpcPending.delete(payload.requestId);
+        if (payload.error) pending.reject(new Error(payload.error));
+        else pending.resolve(payload.result);
+    }
+
+    _rejectAllMapRpc(reason) {
+        for (const [requestId, pending] of this._rpcPending.entries()) {
+            clearTimeout(pending.timeout);
+            pending.reject(new Error(reason));
+            this._rpcPending.delete(requestId);
+        }
     }
 
     _applyRemoteSelection(payload) {

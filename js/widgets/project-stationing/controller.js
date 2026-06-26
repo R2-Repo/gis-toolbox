@@ -115,7 +115,7 @@ function fitPreviewBounds(ctx, geojson) {
     if (typeof turf === 'undefined' || !geojson?.features?.length) return;
     try {
         const bbox = turf.bbox(geojson);
-        ctx.mapService.map?.fitBounds(
+        ctx.mapService.fitBounds?.(
             [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
             { padding: 48, maxZoom: 14, duration: 800 }
         );
@@ -523,7 +523,7 @@ function addDerivedLayer(ctx, name, fc, options = {}) {
     if (options._stationingProfile) dataset._stationingProfile = options._stationingProfile;
     ctx.addLayer(dataset);
     const index = ctx.getLayers().indexOf(dataset);
-    ctx.mapService.addLayer(dataset, index, { fit: options.fit ?? false });
+    ctx.mapService.addLayer(dataset, index, { fit: options.fit ?? false, style: options.style });
     if (options.style) {
         ctx.mapService.setLayerStyle(dataset.id, options.style);
         ctx.mapService.restyleLayer?.(dataset.id, dataset, options.style);

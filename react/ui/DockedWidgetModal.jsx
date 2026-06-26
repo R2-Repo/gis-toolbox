@@ -127,8 +127,7 @@ export function DockedWidgetModal({ modal }) {
                 requestAnimationFrame(() => applyFloatingPlacement(active));
             }
         };
-        dualScreenCoordinator.onStateChange(onDualScreenChange);
-        return () => dualScreenCoordinator.onStateChange(null);
+        return dualScreenCoordinator.onStateChange(onDualScreenChange);
     }, [applyFloatingPlacement]);
 
     useEffect(() => {
