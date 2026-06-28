@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import shp from 'shpjs';
 import { parseGeoJSONText } from '../import/parsers/parse-geojson.js';
 import { parseKmlText } from '../import/parsers/parse-kml.js';
+import { parseGpxText } from '../import/parsers/parse-gpx.js';
 import { extractKmlFromKmzBuffer } from '../import/parsers/parse-kmz-buffer.js';
 import { parseShapefileBuffer } from '../import/parsers/parse-shapefile-buffer.js';
 
@@ -20,6 +21,12 @@ self.onmessage = async (event) => {
                 break;
             case 'kml':
                 result = parseKmlText(payload, {
+                    DOMParserImpl: DOMParser,
+                    toGeoJsonLib: toGeoJSON
+                });
+                break;
+            case 'gpx':
+                result = parseGpxText(payload, {
                     DOMParserImpl: DOMParser,
                     toGeoJsonLib: toGeoJSON
                 });

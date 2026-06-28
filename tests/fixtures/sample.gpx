@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="GIS Toolbox smoke test">
+  <wpt lat="47.6062" lon="-122.3321">
+    <name>Seattle</name>
+    <desc>Waypoint smoke test</desc>
+    <time>2026-06-27T12:00:00Z</time>
+  </wpt>
+  <trk>
+    <name>Sample Track</name>
+    <trkseg>
+      <trkpt lat="47.6062" lon="-122.3321"><time>2026-06-27T12:00:00Z</time></trkpt>
+      <trkpt lat="47.6101" lon="-122.3420"><time>2026-06-27T12:05:00Z</time></trkpt>
+      <trkpt lat="47.6149" lon="-122.3490"><time>2026-06-27T12:10:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

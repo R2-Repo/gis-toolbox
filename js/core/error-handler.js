@@ -58,7 +58,7 @@ const friendlyMessages = {
     [ErrorCategory.UNSUPPORTED_FORMAT]: {
         title: 'Unsupported Format',
         message: 'This file type or data format is not supported.',
-        guidance: 'Convert the data to a supported format (GeoJSON, CSV, Excel, KML, KMZ, Shapefile ZIP).'
+        guidance: 'Convert the data to a supported format (GeoJSON, CSV, Excel, KML, KMZ, GPX, Shapefile ZIP).'
     },
     [ErrorCategory.OUT_OF_MEMORY]: {
         title: 'Out of Memory',

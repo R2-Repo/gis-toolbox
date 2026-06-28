@@ -8,8 +8,7 @@ import { loadPapaParse } from '../core/libs.js';
 import { yieldToUI } from '../core/task-runner.js';
 import {
     parseCoordValue,
-    detectCoordinateColumns,
-    detectProjectedColumns
+    detectAnyCoordinateColumns
 } from './coord-detect.js';
 import { projectedTableCrsMetadata } from './import-crs.js';
 
@@ -21,7 +20,7 @@ function _rowHasData(row) {
 }
 
 function _detectCoordInfo(fields, rows) {
-    return detectCoordinateColumns(fields, rows) || detectProjectedColumns(fields, rows);
+    return detectAnyCoordinateColumns(fields, rows);
 }
 
 function _buildSpatialDataset(name, file, rows, coordInfo, parseErrors, options = {}) {

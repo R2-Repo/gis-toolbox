@@ -8,6 +8,7 @@ import { exportGeoJSON } from './geojson-exporter.js';
 import { exportCSV } from './csv-exporter.js';
 import { exportExcel } from './excel-exporter.js';
 import { exportKML, exportMultiLayerKML } from './kml-exporter.js';
+import { exportGPX } from './gpx-exporter.js';
 import { exportKMZ, exportMultiLayerKMZ } from './kmz-exporter.js';
 import { exportJSON } from './json-exporter.js';
 import { exportShapefile } from './shapefile-exporter.js';
@@ -22,6 +23,7 @@ const EXPORTERS = {
     csv: { fn: exportCSV, label: 'CSV', ext: '.csv', spatial: false },
     xlsx: { fn: exportExcel, label: 'Excel (.xlsx)', ext: '.xlsx', spatial: false },
     kml: { fn: exportKML, label: 'KML', ext: '.kml', spatial: true },
+    gpx: { fn: exportGPX, label: 'GPX', ext: '.gpx', spatial: true },
     kmz: { fn: exportKMZ, label: 'KMZ', ext: '.kmz', spatial: true },
     shapefile: { fn: exportShapefile, label: 'Shapefile (.shp)', ext: '.zip', spatial: true }
 };

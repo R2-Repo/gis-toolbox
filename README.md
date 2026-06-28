@@ -1,6 +1,6 @@
 # GIS Toolbox
 
-Free browser-based GIS and data prep toolkit — import, transform, visualize, and export geospatial data (Shapefile, GeoJSON, KML/KMZ, CSV, Excel, and more).
+Free browser-based GIS and data prep toolkit — import, transform, visualize, and export geospatial data (Shapefile, GeoJSON, KML/KMZ, GPX, CSV, Excel, and more).
 
 ## Development workflow
 

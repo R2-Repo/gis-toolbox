@@ -10,13 +10,14 @@ function _detectFormatFromName(fileName) {
     if (ext === 'csv' || ext === 'tsv' || ext === 'txt') return 'csv';
     if (ext === 'xlsx' || ext === 'xls') return 'xlsx';
     if (ext === 'kml') return 'kml';
+    if (ext === 'gpx') return 'gpx';
     if (ext === 'kmz') return 'kmz';
     if (ext === 'zip') return 'zip';
     if (ext === 'xml') return 'xml';
     return null;
 }
 
-/** Text formats: geojson, json, csv, kml, xml */
+/** Text formats: geojson, json, csv, kml, gpx, xml */
 export const TEXT_SOFT_BYTES = 2 * 1024 * 1024;
 export const TEXT_STRONG_BYTES = 4 * 1024 * 1024;
 export const TEXT_HARD_BYTES = 6 * 1024 * 1024;

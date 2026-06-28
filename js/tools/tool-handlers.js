@@ -58,6 +58,7 @@ import ARCGIS_ENDPOINTS from '../arcgis/endpoints.js';
 import { checkAGOLCompatibility, applyAGOLFixes } from '../agol/compatibility.js';
 import * as gisTools from './gis-tools.js';
 import { convertFeatureCoords } from './coordinates.js';
+import { guessCoordinateFields } from '../import/coord-detect.js';
 import { findFirstLineStringFeature, listLineStringFeatures } from './line-geojson.js';
 
 import drawManager from '../map/draw-manager.js';
@@ -1197,7 +1198,7 @@ export function setupAppWiring() {
     _importInputEl = document.createElement('input');
     _importInputEl.type = 'file';
     _importInputEl.multiple = true;
-    _importInputEl.accept = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.zip,.xml,.gis-toolbox,.gtbx';
+    _importInputEl.accept = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.gpx,.zip,.xml,.gis-toolbox,.gtbx';
     _importInputEl.setAttribute('aria-label', 'Import files');
     _importInputEl.style.cssText = 'opacity:0;position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
     document.body.appendChild(_importInputEl);
@@ -3374,9 +3375,8 @@ async function openCoordConverter() {
     const toFmtOpts = formats.map(f => `<option value="${f.id}" ${f.id === 'dms' ? 'selected' : ''}>${f.label}</option>`).join('');
     const fieldOpts = fields.map(f => `<option value="${f}">${f}</option>`).join('');
 
-    // Auto-detect lat/lon fields
-    const latGuess = fields.find(f => /^(lat|latitude|y)$/i.test(f)) || fields[0] || '';
-    const lonGuess = fields.find(f => /^(lon|lng|longitude|long|x)$/i.test(f)) || (fields[1] || '');
+    // Auto-detect lat/lon or northing/easting fields
+    const { latField: latGuess, lonField: lonGuess } = guessCoordinateFields(fields);
 
     
         const rootId = `coord-converter-react-${Date.now()}`;
@@ -3989,7 +3989,7 @@ export async function doExport(format) {
 
     try {
         const layerStyle = mapService.getLayerStyle(layer.id);
-        if (layerStyle && isSmartStyleActive(layerStyle) && ['shapefile', 'csv', 'xlsx'].includes(format)) {
+        if (layerStyle && isSmartStyleActive(layerStyle) && ['shapefile', 'csv', 'xlsx', 'gpx'].includes(format)) {
             showToast('Smart styling is not included in this format. Use KML, KMZ, or GeoJSON for styled output.', 'info');
         }
 

@@ -6,13 +6,12 @@ import { AppError, ErrorCategory } from '../core/error-handler.js';
 import { loadXLSX } from '../core/libs.js';
 import {
     parseCoordValue,
-    detectCoordinateColumns,
-    detectProjectedColumns
+    detectAnyCoordinateColumns
 } from './coord-detect.js';
 import { projectedTableCrsMetadata } from './import-crs.js';
 
 function _detectCoordInfo(fields, rows) {
-    return detectCoordinateColumns(fields, rows) || detectProjectedColumns(fields, rows);
+    return detectAnyCoordinateColumns(fields, rows);
 }
 
 export async function importExcel(file, task, options = {}) {

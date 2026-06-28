@@ -8,6 +8,7 @@ import { importGeoJSON } from './geojson-importer.js';
 import { importCSV } from './csv-importer.js';
 import { importExcel } from './excel-importer.js';
 import { importKML } from './kml-importer.js';
+import { importGPX } from './gpx-importer.js';
 import { importKMZ } from './kmz-importer.js';
 import { importShapefile } from './shapefile-importer.js';
 import { importJSON } from './json-importer.js';
@@ -131,6 +132,7 @@ const FORMAT_MAP = {
     xlsx: importExcel,
     xls: importExcel,
     kml: importKML,
+    gpx: importGPX,
     kmz: importKMZ,
     zip: importZip,
     xml: importXML
@@ -144,6 +146,7 @@ export function detectFormat(file) {
     if (ext === 'csv' || ext === 'tsv' || ext === 'txt') return 'csv';
     if (ext === 'xlsx' || ext === 'xls') return 'xlsx';
     if (ext === 'kml') return 'kml';
+    if (ext === 'gpx') return 'gpx';
     if (ext === 'kmz') return 'kmz';
     if (ext === 'zip') return 'zip';
     if (ext === 'xml') return 'xml';
@@ -153,7 +156,7 @@ export function detectFormat(file) {
 function _payloadOptionsForImporter(format, payload) {
     if (!payload) return {};
     if (payload.kind === 'text') {
-        if (format === 'kml') {
+        if (format === 'kml' || format === 'gpx') {
             return { sourceFileName: undefined, text: payload.data };
         }
         if (format === 'xml') {
@@ -237,6 +240,12 @@ export async function importFileCore(file, task, options = {}) {
             result = await importGeoJSON(file, task, { sourceFileName: file.name, text: payload.data });
         } else {
             result = await importGeoJSON(file, task);
+        }
+    } else if (format === 'gpx') {
+        if (payload?.kind === 'text') {
+            result = await importGPX(file, task, { sourceFileName: file.name, text: payload.data });
+        } else {
+            result = await importGPX(file, task);
         }
     } else {
         result = await importer(file, task, payloadOpts);

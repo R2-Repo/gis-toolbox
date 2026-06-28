@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { UNIT_CATEGORIES } from '../../../js/workflow/nodes/transform-nodes.js';
+import { guessCoordinateFields } from '../../../js/import/coord-detect.js';
 import {
     getUpstreamFields,
     getUpstreamFieldsForPort,
@@ -667,8 +668,7 @@ function CoordConvertInspector({ node, config, onConfigChange, engine, getLayers
 
     useEffect(() => {
         if (fields.length > 0 && !config.latField && !config.lonField) {
-            const latGuess = fields.find((f) => /^(lat|latitude|y)$/i.test(f));
-            const lonGuess = fields.find((f) => /^(lon|lng|longitude|long|x)$/i.test(f));
+            const { latField: latGuess, lonField: lonGuess } = guessCoordinateFields(fields);
             if (latGuess || lonGuess) {
                 onConfigChange({
                     ...config,
@@ -704,7 +704,7 @@ function CoordConvertInspector({ node, config, onConfigChange, engine, getLayers
                         <option value="dms">Degrees Minutes Seconds (DMS)</option>
                         <option value="ddm">Degrees Decimal Minutes (DDM)</option>
                     </InspectorSelect>
-                    <InspectorLabel style={{ marginTop: 6 }}>Latitude / Y Field</InspectorLabel>
+                    <InspectorLabel style={{ marginTop: 6 }}>Latitude / Northing / Y Field</InspectorLabel>
                     <InspectorSelect
                         value={config.latField}
                         onChange={(latField) => onConfigChange({ ...config, latField })}
@@ -712,7 +712,7 @@ function CoordConvertInspector({ node, config, onConfigChange, engine, getLayers
                         <option value="">— Select —</option>
                         {fields.map((f) => <option key={f} value={f}>{f}</option>)}
                     </InspectorSelect>
-                    <InspectorLabel style={{ marginTop: 6 }}>Longitude / X Field</InspectorLabel>
+                    <InspectorLabel style={{ marginTop: 6 }}>Longitude / Easting / X Field</InspectorLabel>
                     <InspectorSelect
                         value={config.lonField}
                         onChange={(lonField) => onConfigChange({ ...config, lonField })}

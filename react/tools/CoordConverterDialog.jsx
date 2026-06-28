@@ -61,7 +61,7 @@ export function CoordConverterDialog({
                         </select>
                     </div>
                     <div className="form-group">
-                        <label>Lat / Y field</label>
+                        <label>Lat / Northing / Y field</label>
                         <select value={latField} onChange={(e) => setLatField(e.target.value)}>
                             {fields.map((field) => (
                                 <option key={field} value={field}>{field}</option>
@@ -69,7 +69,7 @@ export function CoordConverterDialog({
                         </select>
                     </div>
                     <div className="form-group">
-                        <label>Lon / X field</label>
+                        <label>Lon / Easting / X field</label>
                         <select value={lonField} onChange={(e) => setLonField(e.target.value)}>
                             {fields.map((field) => (
                                 <option key={field} value={field}>{field}</option>
