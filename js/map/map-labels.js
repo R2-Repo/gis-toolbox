@@ -169,6 +169,9 @@ export function normalizeLayerLabels(labels) {
  * @returns {string}
  */
 export function resolvePlacemarkLabel(feature, idx, style) {
+    if (feature?.properties?._annotationType && feature?.properties?.text) {
+        return String(feature.properties.text);
+    }
     const labels = style?.labels;
     if (labels?.enabled && labels.field) {
         const val = feature?.properties?.[labels.field];

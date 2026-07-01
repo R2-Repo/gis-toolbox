@@ -5,6 +5,7 @@ import { openRouteMilepostSegment } from './route-milepost-segment/controller.js
 import { openProjectStationing } from './project-stationing/controller.js';
 import { openLayerMatchAssistant } from './layer-match-assistant/controller.js';
 import { openCrsManager } from './crs-manager/controller.js';
+import { openQuery } from './query/controller.js';
 import logger from '../core/logger.js';
 
 /** @typedef {import('./widget-types.js').WidgetContext} WidgetContext */
@@ -61,6 +62,14 @@ export const GIS_WIDGETS = [
         icon: '🔗',
         tip: 'Compare two layers using location and fuzzy name matching; review and export matched and unmatched results.',
         open: openLayerMatchAssistant
+    },
+    {
+        type: 'query',
+        action: 'openQuery',
+        label: 'Query Features',
+        icon: '🔍',
+        tip: 'Find features by attribute values and highlight, zoom, or select results on the map.',
+        open: openQuery
     }
 ];
 
@@ -101,13 +110,14 @@ export function buildWidgetActions(getCtx) {
 /**
  * @param {string} type
  * @param {WidgetContext} ctx
+ * @param {object} [options]
  */
-export function openWidget(type, ctx) {
+export function openWidget(type, ctx, options = {}) {
     const widget = ALL_GIS_WIDGETS.find((entry) => entry.type === type);
     if (!widget) {
         logger.warn('Widget', 'Unknown widget type', { type });
         return;
     }
     logger.info('Widget', 'Open', { type: widget.type, label: widget.label });
-    widget.open(ctx);
+    widget.open(ctx, options);
 }

@@ -39,6 +39,7 @@ import {
     handleLayerStyleChange,
     handleLayerScaleRangeChange,
     exportProjectKit,
+    exportMapView,
     buildMapContextMenuItems,
     setPanelCollapsed
 } from '../js/tools/tool-handlers.js';
@@ -173,6 +174,7 @@ function AppShell() {
                     onDimensionChange={onDimensionChange}
                     onLogs={toggleLogs}
                     onInfo={showToolInfo}
+                    onExportMapView={exportMapView}
                     getActiveLayer={getActiveLayer}
                     getSelectionCount={(layerId) => mapService.getSelectionCount(layerId)}
                     onDeleteSelected={deleteSelectedFeatures}

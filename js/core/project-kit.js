@@ -9,7 +9,7 @@ export const PROJECT_KIT_FORMAT_VERSION = 1;
 export const PROJECT_KIT_EXTENSION = '.gis-toolbox';
 export const PROJECT_KIT_LEGACY_EXTENSION = '.gtbx';
 export const PROJECT_KIT_DISPLAY_NAME = 'Toolbox Kit';
-export const PROJECT_KIT_SECTIONS = ['layers', 'map', 'workflow', 'preferences'];
+export const PROJECT_KIT_SECTIONS = ['layers', 'map', 'workflow', 'preferences', 'widgets'];
 export const WORKFLOW_NODE_CACHE_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
@@ -94,6 +94,7 @@ export function resolveLayerIdConflict(id, existingIds) {
  *   map?: object|null,
  *   workflow?: { pipeline: object, nodeCache?: object }|null,
  *   preferences?: object|null,
+ *   widgets?: { activeWidgets?: object[] }|null,
  *   exportWorkspaceLayerBundle?: (layerId: string) => Promise<object|null>,
  *   projectName?: string
  * }} options
@@ -105,7 +106,8 @@ export async function buildProjectKitSnapshot(options) {
         layers: null,
         map: null,
         workflow: null,
-        preferences: null
+        preferences: null,
+        widgets: null
     };
 
     if (sections.includes('layers') && Array.isArray(options.layers)) {
@@ -129,6 +131,14 @@ export async function buildProjectKitSnapshot(options) {
 
     if (sections.includes('preferences') && options.preferences) {
         snapshot.preferences = { ...options.preferences };
+    }
+
+    if (sections.includes('widgets') && options.widgets) {
+        snapshot.widgets = {
+            activeWidgets: Array.isArray(options.widgets.activeWidgets)
+                ? options.widgets.activeWidgets
+                : []
+        };
     }
 
     return snapshot;
@@ -246,6 +256,11 @@ export async function packProjectKit(snapshot, JSZipLib, task) {
         zip.file('preferences.json', JSON.stringify(snapshot.preferences, null, 2));
     }
 
+    if (snapshot.widgets) {
+        task?.updateProgress?.(92, 'Packing widget state…');
+        zip.file('widgets.json', JSON.stringify(snapshot.widgets, null, 2));
+    }
+
     task?.updateProgress?.(95, 'Compressing…');
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
     task?.updateProgress?.(100, 'Done');
@@ -278,7 +293,7 @@ export async function parseProjectKit(input, JSZipLib, task) {
     }
 
     const sections = normalizeSections(manifest.sections);
-    const snapshot = { manifest, layers: null, map: null, workflow: null, preferences: null };
+    const snapshot = { manifest, layers: null, map: null, workflow: null, preferences: null, widgets: null };
 
     if (sections.includes('layers') && zip.file('layers/index.json')) {
         task?.updateProgress?.(30, 'Loading layers…');
@@ -299,6 +314,11 @@ export async function parseProjectKit(input, JSZipLib, task) {
     if (sections.includes('preferences') && zip.file('preferences.json')) {
         const prefRaw = await zip.file('preferences.json').async('string');
         snapshot.preferences = JSON.parse(prefRaw);
+    }
+
+    if (sections.includes('widgets') && zip.file('widgets.json')) {
+        const widgetsRaw = await zip.file('widgets.json').async('string');
+        snapshot.widgets = JSON.parse(widgetsRaw);
     }
 
     task?.updateProgress?.(100, 'Done');
@@ -383,6 +403,8 @@ export function summarizeProjectKit(snapshot) {
         hasMap: !!snapshot?.map,
         hasWorkflow: workflowNodeCount > 0,
         hasPreferences: !!snapshot?.preferences,
+        hasWidgets: Array.isArray(snapshot?.widgets?.activeWidgets) && snapshot.widgets.activeWidgets.length > 0,
+        widgetCount: snapshot?.widgets?.activeWidgets?.length ?? 0,
         workflowNodeCount
     };
 }

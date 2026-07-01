@@ -16,6 +16,7 @@ import {
     broadcastViewportFromMap,
     applyRemoteSelection
 } from './dual-screen/secondary-client.js';
+import { setupMapPrintMenu } from './map/map-export.js';
 
 const ROLE = 'secondary';
 const QUEUED_MESSAGE_TYPES = new Set([
@@ -323,6 +324,18 @@ function handleMessage(msg) {
     dispatchMessage(msg);
 }
 
+function showMapWindowToast(message, type = 'info') {
+    applyMapToast({ message, type });
+}
+
+async function setupModalHost() {
+    const host = document.createElement('div');
+    host.id = 'map-window-modal-host';
+    document.body.appendChild(host);
+    const { mountModalHost } = await import('../react/ui/mountModalHost.jsx');
+    mountModalHost(host);
+}
+
 function setupHeaderControls() {
     document.getElementById('btn-exit-dual-screen')?.addEventListener('click', () => {
         sendBye();
@@ -351,6 +364,13 @@ function setupHeaderControls() {
         else mapService.disable3D();
         post(MessageType.MAP_CHROME, { is3d });
     });
+
+    setupMapPrintMenu({
+        menuRoot: document.getElementById('map-print-menu'),
+        mapService,
+        showToast: showMapWindowToast,
+        blockWhenDualScreen: false
+    });
 }
 
 function boot() {
@@ -362,6 +382,7 @@ function boot() {
     channel = new DualScreenChannel(ROLE, handleMessage);
     mapService.init('map-container');
     setupHeaderControls();
+    void setupModalHost();
     initSecondaryClient({ post, getChannel: () => channel });
 
     const map = mapService.getMap();

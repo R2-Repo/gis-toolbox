@@ -138,6 +138,12 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         getLayerRecord(layerId) {
             return mapAdapter.dataLayers?.get?.(layerId) ?? null;
         },
+        syncAnnotationSources(layerId, geojson) {
+            return mapAdapter.syncAnnotationSources?.(layerId, geojson);
+        },
+        compositeAnnotationOverlay(ctx, pixelScale) {
+            return mapAdapter.compositeAnnotationOverlay?.(ctx, pixelScale);
+        },
         getLayerIds() {
             return [...(mapAdapter.dataLayers?.keys?.() ?? [])];
         },
@@ -225,6 +231,18 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         showTempFeature(geojson, duration) {
             return mapAdapter.showTempFeature(geojson, duration);
         },
+        showQueryResults(layerId, indices) {
+            return mapAdapter.showQueryResults?.(layerId, indices);
+        },
+        clearQueryResults() {
+            return mapAdapter.clearQueryResults?.();
+        },
+        pulseQueryResults(options) {
+            return mapAdapter.pulseQueryResults?.(options);
+        },
+        fitToFeatureIndices(layerId, indices, options) {
+            return mapAdapter.fitToFeatureIndices?.(layerId, indices, options);
+        },
         showRouteMilepostPreview(geojson, duration) {
             return mapAdapter.showRouteMilepostPreview?.(geojson, duration);
         },
@@ -274,6 +292,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         stopCameraOrbit() {
             return mapAdapter.stopCameraOrbit();
+        },
+        prepareOrbitView(center, options) {
+            return mapAdapter.prepareOrbitView(center, options);
         },
     };
 }

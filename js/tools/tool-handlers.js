@@ -79,6 +79,13 @@ import { loadPaletteFavorites, savePaletteFavorites } from '../map/palette-store
 import { getWorkspaceLayer, exportWorkspaceLayerBundle } from '../workspace/workspace-store.js';
 import { WorkflowStore } from '../workflow/workflow-store.js';
 import { buildWidgetActions } from '../widgets/registry.js';
+import {
+    loadWidgetStore,
+    remapWidgetLayerIds,
+    serializeWidgetStore,
+    getWidgetsToRestore,
+    restoreOpenWidget
+} from '../widgets/widget-state-store.js';
 import { createWidgetContext } from '../widgets/widget-context.js';
 import { openImportStationTable } from '../widgets/project-stationing/controller.js';
 import { isProjectStationingCenterline } from '../widgets/project-stationing/route-profile.js';
@@ -265,19 +272,28 @@ async function _addRestoredDatasets(datasets, styles, activeLayerId, { replaceSt
 async function applyProjectKitSnapshot(snapshot, { sections, mode = 'replace' }) {
     const selected = PROJECT_KIT_SECTIONS.filter((key) => sections.includes(key));
     sessionStore.pauseSessionSave();
+    let layerIdMap = null;
     try {
         if (selected.includes('layers') && snapshot.layers) {
             if (mode === 'replace') {
                 await _clearLayersForKitReplace();
             }
-            const { datasets, styles, activeLayerId } = await prepareLayersFromKitSection({
+            const { datasets, styles, activeLayerId, idMap } = await prepareLayersFromKitSection({
                 layersSection: snapshot.layers,
                 mode,
                 existingLayerIds: new Set(getLayers().map((layer) => layer.id))
             });
+            layerIdMap = idMap;
             await _addRestoredDatasets(datasets, styles, activeLayerId, {
                 replaceStyles: mode === 'replace'
             });
+        }
+
+        if (selected.includes('widgets') && snapshot.widgets) {
+            loadWidgetStore(snapshot.widgets);
+            if (layerIdMap?.size) {
+                remapWidgetLayerIds(layerIdMap);
+            }
         }
 
         if (selected.includes('map') && snapshot.map) {
@@ -321,6 +337,13 @@ async function applyProjectKitSnapshot(snapshot, { sections, mode = 'replace' })
         if (selected.includes('layers')) {
             mapService.fitToAll();
         }
+
+        if (selected.includes('widgets')) {
+            const widgetsToRestore = getWidgetsToRestore();
+            for (const entry of widgetsToRestore) {
+                await restoreOpenWidget(entry.type, getWidgetContext());
+            }
+        }
     } finally {
         sessionStore.resumeSessionSave(true);
     }
@@ -352,6 +375,7 @@ export async function exportProjectKit(options = {}) {
                     nodeCache: _collectWorkflowNodeCache(wf.engine)
                 } : null,
                 preferences: { paletteFavorites: loadPaletteFavorites() },
+                widgets: serializeWidgetStore(),
                 exportWorkspaceLayerBundle
             });
             const blob = await packProjectKit(snapshot, JSZip, t);
@@ -359,6 +383,37 @@ export async function exportProjectKit(options = {}) {
             showToast('Toolbox Export saved.', 'success');
         });
     });
+}
+
+export async function exportMapView(format) {
+    try {
+        const mod = await import('../map/map-export.js');
+        if (format === 'gif') {
+            if (dualScreenCoordinator?.isActive) {
+                showToast('Map is in the Dual Screen window — export from that window.', 'error');
+                return;
+            }
+            const { pickOrbitGifSettingsModal } = await import('../../react/tools/mountOrbitGifDialog.jsx');
+            const settings = await pickOrbitGifSettingsModal(mapService, { getActiveLayer });
+            if (!settings) return;
+            showToast('Recording orbit GIF…', 'info');
+            const result = await mod.exportOrbitGif(mapService, settings);
+            showToast('GIF saved.', 'success');
+            return result;
+        }
+        if (mod.willUseHighResExport(mapService)) {
+            showToast('Exporting high-resolution map…', 'info');
+        }
+        const result = await mod.exportMapView(mapService, format, {
+            blockWhenDualScreen: true,
+            dualScreenCoordinator
+        });
+        showToast(`${format.toUpperCase()} saved.`, 'success');
+        return result;
+    } catch (err) {
+        showToast(err.message || 'Map export failed.', 'error');
+        throw err;
+    }
 }
 
 export async function importProjectKit(initialFile) {
@@ -400,6 +455,7 @@ export async function importProjectKit(initialFile) {
             if (dialogResult.sections.includes('workflow') && summary.hasWorkflow) parts.push('pipeline');
             if (dialogResult.sections.includes('map') && summary.hasMap) parts.push('map settings');
             if (dialogResult.sections.includes('preferences') && summary.hasPreferences) parts.push('preferences');
+            if (dialogResult.sections.includes('widgets') && summary.hasWidgets) parts.push('widget state');
             showToast(`Toolbox project restored${parts.length ? ` (${parts.join(', ')})` : ''}.`, 'success');
             logger.info('ProjectKit', 'Import complete', { mode: dialogResult.mode, sections: dialogResult.sections });
         });

@@ -59,6 +59,24 @@ import {
 } from './interaction-hit.js';
 import { buildSymbolLayerLayout } from './style-symbols.js';
 import { buildMapLabelLayerSpec, resolveLayerLabels, isMapLabelLayerId, resolveEffectiveLabelZoomRange } from './map-labels.js';
+import {
+    buildAnnotationLayerSpecs,
+    excludeAnnotationsFilter,
+    removeAnnotationSources,
+    syncAnnotationSources
+} from './map-annotations.js';
+import {
+    AnnotationOverlayManager,
+    setAnnotationLayersVisibility
+} from './annotation-overlay.js';
+import {
+    buildQueryResultFeatures,
+    fitMapToFeatures,
+    removeQueryResultLayers,
+    renderQueryResultLayers,
+    resolveFeaturesForZoom,
+    startQueryResultPulse
+} from './query-result-overlay.js';
 
 const BASEMAPS = {
     voyager: {
@@ -160,6 +178,8 @@ class MapManager {
 
         // Scale-range re-apply when latitude shifts significantly
         this._lastScaleRangeLat = null;
+
+        this._annotationOverlay = null;
     }
 
     _layerAddSpec(baseSpec, zoomRange) {
@@ -255,6 +275,7 @@ class MapManager {
             maxPitch: 85,
             dragRotate: false,
             touchZoomRotate: true,
+            preserveDrawingBuffer: true,
             // Keep parent-zoom tiles visible while zooming in so motion feels smooth
             // (default true cancels them and details pop in abruptly).
             cancelPendingTileRequestsWhileZooming: false
@@ -309,6 +330,14 @@ class MapManager {
             }, 100);
         });
 
+        this._annotationOverlay = new AnnotationOverlayManager(this.map);
+        this._annotationOverlay.setGeojsonProvider((datasetId) => this.dataLayers.get(datasetId)?.geojson);
+        this._annotationOverlay.bind();
+        bus.on('map:3dChanged', (is3D) => {
+            this._setAllAnnotationMapLibreVisibility(!is3D);
+            this._annotationOverlay?.setActive(!!is3D);
+        });
+
         // Right-click
         this.map.on('contextmenu', (e) => {
             e.preventDefault();
@@ -346,6 +375,8 @@ class MapManager {
         this._closePopup?.();
         this._cancelInteraction?.();
         this.clearSelection?.();
+        this._annotationOverlay?.destroy();
+        this._annotationOverlay = null;
         if (this._rectSelectCleanup) { this._rectSelectCleanup(); this._rectSelectCleanup = null; }
         if (this.map) {
             this.map.remove();
@@ -582,10 +613,11 @@ class MapManager {
 
         // Lines
         if (hasLines) {
+            const lineFilter = excludeAnnotationsFilter(_geomTypesFilter(['LineString', 'MultiLineString']));
             const lineId = `${dataset.id}-line`;
             this.map.addLayer({
                 id: lineId, type: 'line', source: sourceId,
-                filter: _geomTypesFilter(['LineString', 'MultiLineString']),
+                filter: lineFilter,
                 paint: {
                     'line-color': styLine.strokeColor,
                     'line-width': styLine.strokeWidth,
@@ -594,7 +626,7 @@ class MapManager {
             });
             layerIds.push(lineId);
             layerIds.push(this._ensureLineHitLayer(
-                sourceId, lineId, _geomTypesFilter(['LineString', 'MultiLineString']), styLine.strokeWidth
+                sourceId, lineId, lineFilter, styLine.strokeWidth
             ));
         }
 
@@ -605,6 +637,7 @@ class MapManager {
                 ? buildSymbolLayerLayout(layerStyle, 'point', (shape, color, fillColor, size, opacity) =>
                     this._ensureSymbolImage(shape, color, fillColor, size, opacity))
                 : null;
+            const pointGeomFilter = excludeAnnotationsFilter(_geomTypesFilter(['Point', 'MultiPoint']));
 
             if (useCluster) {
                 const clusterId = `${dataset.id}-clusters`;
@@ -629,8 +662,8 @@ class MapManager {
                 this.map.addLayer({
                     id: ptId, type: 'symbol', source: sourceId,
                     filter: useCluster
-                        ? ['all', _geomTypesFilter(['Point', 'MultiPoint']), ['!', ['has', 'point_count']]]
-                        : _geomTypesFilter(['Point', 'MultiPoint']),
+                        ? ['all', pointGeomFilter, ['!', ['has', 'point_count']]]
+                        : pointGeomFilter,
                     layout: symbolLayout.layout
                 });
                 layerIds.push(ptId);
@@ -639,8 +672,8 @@ class MapManager {
                 this.map.addLayer({
                     id: ptId, type: 'circle', source: sourceId,
                     filter: useCluster
-                        ? ['all', _geomTypesFilter(['Point', 'MultiPoint']), ['!', ['has', 'point_count']]]
-                        : _geomTypesFilter(['Point', 'MultiPoint']),
+                        ? ['all', pointGeomFilter, ['!', ['has', 'point_count']]]
+                        : pointGeomFilter,
                     paint: {
                         'circle-radius': styPoint.circleRadius,
                         'circle-color': styPoint.fillColor,
@@ -658,6 +691,8 @@ class MapManager {
             hasLines,
             useCluster
         });
+
+        this._addAnnotationLayers(dataset.id, sourceId, taggedFeatures, layerIds);
 
         // Click handlers
         this._bindLayerClickHandlers(dataset, layerIds, styFlat);
@@ -895,11 +930,12 @@ class MapManager {
         }
 
         if (hasLines) {
+            const lineFilter = excludeAnnotationsFilter(_geomTypesFilter(['LineString', 'MultiLineString']));
             const lineId = `${idBase}-line`;
             if (!this.map.getLayer(lineId)) {
                 this.map.addLayer({
                     id: lineId, type: 'line', source: sourceId,
-                    filter: _geomTypesFilter(['LineString', 'MultiLineString']),
+                    filter: lineFilter,
                     paint: {
                         'line-color': styLine.strokeColor,
                         'line-width': styLine.strokeWidth,
@@ -909,17 +945,18 @@ class MapManager {
             }
             layerIds.push(lineId);
             layerIds.push(this._ensureLineHitLayer(
-                sourceId, lineId, _geomTypesFilter(['LineString', 'MultiLineString']), styLine.strokeWidth
+                sourceId, lineId, lineFilter, styLine.strokeWidth
             ));
         }
 
         if (hasPoints) {
             const fo = Math.min(1, (typeof styPoint.fillOpacity === 'number' ? styPoint.fillOpacity : 0.3) + 0.3);
+            const pointGeomFilter = excludeAnnotationsFilter(_geomTypesFilter(['Point', 'MultiPoint']));
             const ptId = `${idBase}-point`;
             if (!this.map.getLayer(ptId)) {
                 this.map.addLayer({
                     id: ptId, type: 'circle', source: sourceId,
-                    filter: _geomTypesFilter(['Point', 'MultiPoint']),
+                    filter: pointGeomFilter,
                     paint: {
                         'circle-radius': styPoint.circleRadius,
                         'circle-color': styPoint.fillColor,
@@ -942,6 +979,60 @@ class MapManager {
         const zoomRange = this._getLayerZoomRange(dataset);
         this._applyZoomRangeToLayerIds(layerIds, zoomRange, layerStyle.labels);
         return layerIds;
+    }
+
+    _addAnnotationLayers(datasetId, mainSourceId, taggedFeatures, layerIds) {
+        if (!this.map) return;
+
+        removeAnnotationSources(this.map, datasetId);
+
+        for (const lid of [
+            `${datasetId}-ann-callout-line`,
+            `${datasetId}-ann-anchor`,
+            `${datasetId}-ann-labels`
+        ]) {
+            if (this.map.getLayer(lid)) this.map.removeLayer(lid);
+        }
+
+        const spec = buildAnnotationLayerSpecs(datasetId, mainSourceId, taggedFeatures);
+        if (!spec.layers?.length) return;
+
+        if (spec.labelSourceId && spec.labelSourceData) {
+            this.map.addSource(spec.labelSourceId, { type: 'geojson', data: spec.labelSourceData });
+        }
+        if (spec.anchorSourceId && spec.anchorSourceData) {
+            this.map.addSource(spec.anchorSourceId, { type: 'geojson', data: spec.anchorSourceData });
+        }
+
+        for (const layer of spec.layers) {
+            this.map.addLayer(layer);
+        }
+        layerIds.push(...spec.layerIds);
+
+        this._annotationOverlay?.register(datasetId, spec.layerIds);
+        setAnnotationLayersVisibility(this.map, datasetId, !this._3dEnabled);
+        if (this._3dEnabled) {
+            this._annotationOverlay?.setActive(true);
+        }
+    }
+
+    _setAllAnnotationMapLibreVisibility(visible) {
+        if (!this.map) return;
+        for (const datasetId of this.dataLayers.keys()) {
+            setAnnotationLayersVisibility(this.map, datasetId, visible);
+        }
+    }
+
+    compositeAnnotationOverlay(ctx, pixelScale = 1) {
+        this._annotationOverlay?.compositeOntoCanvas(ctx, pixelScale);
+    }
+
+    syncAnnotationSources(datasetId, geojson) {
+        if (!this.map || !datasetId) return;
+        syncAnnotationSources(this.map, datasetId, geojson);
+        if (this._3dEnabled) {
+            this._annotationOverlay?.scheduleRefresh();
+        }
     }
 
     _addLabelLayers(layerStyle, dataset, idBase, sourceId, layerIds, { hasPoints, hasLines, useCluster = false } = {}) {
@@ -1142,6 +1233,8 @@ class MapManager {
                 }
                 if (this.map.getSource(chunk.sourceId)) this.map.removeSource(chunk.sourceId);
             }
+            removeAnnotationSources(this.map, id);
+            this._annotationOverlay?.unregister(id);
             this.dataLayers.delete(id);
         }
         this._workspaceDatasets?.delete(id);
@@ -1831,6 +1924,44 @@ class MapManager {
 
     /** Whether an orbit animation is currently running */
     get isOrbiting() { return !!this._orbitCenter; }
+
+    /**
+     * Fly to orbit view (3D, pitch, zoom clamp) before a scripted rotation export.
+     * @param {{ lng: number, lat: number }} center
+     * @param {{ zoom?: number, pitch?: number, duration?: number }} [options]
+     * @returns {Promise<{ startBearing: number }>}
+     */
+    async prepareOrbitView(center, options = {}) {
+        this.stopCameraOrbit();
+        const map = this.map;
+        if (!map) {
+            throw new Error('Map is not ready');
+        }
+
+        if (!this._3dEnabled) {
+            this.enable3D();
+        }
+
+        let zoom = options.zoom ?? map.getZoom();
+        if (zoom < MapManager.ORBIT_MIN_ZOOM) zoom = MapManager.ORBIT_MIN_ZOOM;
+        if (zoom > MapManager.ORBIT_MAX_ZOOM) zoom = MapManager.ORBIT_MAX_ZOOM;
+
+        let pitch = options.pitch ?? MapManager.ORBIT_PITCH;
+        if (pitch < 0) pitch = 0;
+        if (pitch > 85) pitch = 85;
+
+        await new Promise((resolve) => {
+            map.once('moveend', resolve);
+            map.flyTo({
+                center: [center.lng, center.lat],
+                zoom,
+                pitch,
+                duration: options.duration ?? 1500
+            });
+        });
+
+        return { startBearing: map.getBearing() };
+    }
 
     _touchClientToLngLat(clientX, clientY) {
         const rect = this.map.getContainer().getBoundingClientRect();
@@ -3206,6 +3337,51 @@ class MapManager {
     invertSelection(layerId, geojson) {
         const current = this._selections.get(layerId) || new Set();
         this.selectFeatures(layerId, geojson.features.map((_, i) => i).filter(i => !current.has(i)));
+    }
+
+    // ============================
+    // Query result overlay (temporary multi-feature highlight)
+    // ============================
+
+    _stopQueryResultPulse() {
+        if (this._queryPulseCancel) {
+            this._queryPulseCancel();
+            this._queryPulseCancel = null;
+        }
+    }
+
+    showQueryResults(layerId, indices = []) {
+        if (!this.map) return;
+        this._stopQueryResultPulse();
+        const features = buildQueryResultFeatures(this.dataLayers, layerId, indices);
+        renderQueryResultLayers(this.map, features);
+        this._queryResultLayerId = layerId;
+        this._queryResultIndices = [...indices];
+    }
+
+    clearQueryResults() {
+        this._stopQueryResultPulse();
+        if (this.map) removeQueryResultLayers(this.map);
+        this._queryResultLayerId = null;
+        this._queryResultIndices = null;
+    }
+
+    pulseQueryResults({ mode = 'pulse' } = {}) {
+        if (!this.map) return;
+        this._stopQueryResultPulse();
+        this._queryPulseCancel = startQueryResultPulse(this.map, { mode });
+    }
+
+    fitToFeatureIndices(layerId, indices = [], options = {}) {
+        if (!this.map || !indices.length) return;
+        const zoomMode = options.mode ?? 'all';
+        if (zoomMode === 'none') return;
+        const features = resolveFeaturesForZoom(this.dataLayers, layerId, indices, zoomMode);
+        if (!features?.length) return;
+        fitMapToFeatures(this.map, features, {
+            padding: options.padding ?? 48,
+            maxZoom: options.maxZoom ?? 16
+        });
     }
 
     // ============================

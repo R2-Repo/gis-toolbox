@@ -1,5 +1,6 @@
 import { PipelineIcon } from '../ui/PipelineIcon.jsx';
 import { SelectionBar } from '../map/SelectionBar.jsx';
+import { MapPrintMenu } from './MapPrintMenu.jsx';
 
 const faviconUrl = `${import.meta.env.BASE_URL}icons/favicon.png`;
 
@@ -12,6 +13,7 @@ export function HeaderBar({
     onDimensionChange,
     onLogs,
     onInfo,
+    onExportMapView,
     getActiveLayer,
     getSelectionCount,
     onDeleteSelected,
@@ -72,6 +74,7 @@ export function HeaderBar({
                     <button className={`header-toggle-option${dimension === '2d' ? ' active' : ''}`} data-value="2d" onClick={() => onDimensionChange?.('2d')}>2D</button>
                     <button className={`header-toggle-option${dimension === '3d' ? ' active' : ''}`} data-value="3d" onClick={() => onDimensionChange?.('3d')}>3D</button>
                 </div>
+                <MapPrintMenu onExportMapView={onExportMapView} />
                 <button className="btn btn-ghost btn-sm" id="btn-logs" title="Logs" onClick={() => onLogs?.()}>📋</button>
                 <button
                     className="btn btn-ghost"
