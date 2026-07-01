@@ -3019,8 +3019,8 @@ class MapManager {
                 ['==', ['get', '_preview'], 'antenna_indicator']
             ],
             paint: {
-                'fill-color': ['coalesce', ['get', 'fill'], '#38bdf8'],
-                'fill-opacity': ['coalesce', ['to-number', ['get', 'fill-opacity']], 0.35]
+                'fill-color': ['coalesce', ['get', 'fill'], '#e879f9'],
+                'fill-opacity': ['coalesce', ['to-number', ['get', 'fill-opacity']], 0.4]
             }
         });
         layerIds.push(antennaIndicatorFillId);
@@ -3035,7 +3035,7 @@ class MapManager {
                 ['==', ['get', '_preview'], 'antenna_indicator']
             ],
             paint: {
-                'line-color': ['coalesce', ['get', 'stroke'], '#0ea5e9'],
+                'line-color': ['coalesce', ['get', 'stroke'], '#c026d3'],
                 'line-width': ['coalesce', ['to-number', ['get', 'stroke-width']], 2],
                 'line-opacity': ['coalesce', ['to-number', ['get', 'stroke-opacity']], 0.9]
             }

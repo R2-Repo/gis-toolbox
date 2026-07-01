@@ -28,19 +28,49 @@ describe('wireless coverage raster', () => {
     });
 
     it('maps side-lobe angles much weaker than boresight at same distance', () => {
-        const rangeMeters = 1200;
+        const rangeMeters = 1609.344 * 0.05;
         const boresight = signalStrengthAtOffset(POLE_CENTER, rangeMeters, 0, sector, 'miles');
         const sideLobeBearingRad = ((90 + 53) * Math.PI) / 180;
         const sideDx = rangeMeters * Math.sin(sideLobeBearingRad);
         const sideDy = rangeMeters * Math.cos(sideLobeBearingRad);
         const sideLobe = signalStrengthAtOffset(POLE_CENTER, sideDx, sideDy, sector, 'miles');
-        expect(sideLobe).toBe(0);
+        expect(sideLobe).toBeGreaterThan(0.03);
+        expect(sideLobe).toBeLessThan(boresight);
 
-        const nearSideDx = sideDx * 0.04;
-        const nearSideDy = sideDy * 0.04;
-        const nearSideLobe = signalStrengthAtOffset(POLE_CENTER, nearSideDx, nearSideDy, sector, 'miles');
-        expect(nearSideLobe).toBeGreaterThan(0);
-        expect(nearSideLobe).toBeLessThan(boresight * 0.35);
+        const farSideDx = rangeMeters * 2.2 * Math.sin(sideLobeBearingRad);
+        const farSideDy = rangeMeters * 2.2 * Math.cos(sideLobeBearingRad);
+        expect(signalStrengthAtOffset(POLE_CENTER, farSideDx, farSideDy, sector, 'miles')).toBe(0);
+    });
+
+    it('extends side-lobe heatmap slightly beyond strict outline envelope', () => {
+        const rangeMeters = 1609.344;
+        const sideLobeBearingRad = ((90 + 53) * Math.PI) / 180;
+        const strictFraction = 0.04;
+        const spreadFraction = 0.075;
+        const pastFraction = 0.11;
+        const strictDx = rangeMeters * strictFraction * Math.sin(sideLobeBearingRad);
+        const strictDy = rangeMeters * strictFraction * Math.cos(sideLobeBearingRad);
+        const spreadDx = rangeMeters * spreadFraction * Math.sin(sideLobeBearingRad);
+        const spreadDy = rangeMeters * spreadFraction * Math.cos(sideLobeBearingRad);
+        const pastDx = rangeMeters * pastFraction * Math.sin(sideLobeBearingRad);
+        const pastDy = rangeMeters * pastFraction * Math.cos(sideLobeBearingRad);
+        const strictSignal = signalStrengthAtOffset(POLE_CENTER, strictDx, strictDy, sector, 'miles');
+        const spreadSignal = signalStrengthAtOffset(POLE_CENTER, spreadDx, spreadDy, sector, 'miles');
+        const pastSignal = signalStrengthAtOffset(POLE_CENTER, pastDx, pastDy, sector, 'miles');
+        expect(strictSignal).toBeGreaterThan(spreadSignal);
+        expect(spreadSignal).toBeGreaterThan(0);
+        expect(pastSignal).toBe(0);
+    });
+
+    it('boosts side-lobe signal nearer the pole', () => {
+        const rangeMeters = 1609.344 * 0.04;
+        const sideLobeBearingRad = ((90 + 53) * Math.PI) / 180;
+        const nearDx = rangeMeters * Math.sin(sideLobeBearingRad);
+        const nearDy = rangeMeters * Math.cos(sideLobeBearingRad);
+        const farDx = rangeMeters * 2.5 * Math.sin(sideLobeBearingRad);
+        const farDy = rangeMeters * 2.5 * Math.cos(sideLobeBearingRad);
+        expect(signalStrengthAtOffset(POLE_CENTER, nearDx, nearDy, sector, 'miles'))
+            .toBeGreaterThan(signalStrengthAtOffset(POLE_CENTER, farDx, farDy, sector, 'miles'));
     });
 
     it('keeps warm-range signal farther along the main lobe boresight', () => {
@@ -48,9 +78,9 @@ describe('wireless coverage raster', () => {
         const midLobe = signalStrengthAtOffset(POLE_CENTER, rangeMeters * 0.55, 0, sector, 'miles');
         const farLobe = signalStrengthAtOffset(POLE_CENTER, rangeMeters * 0.85, 0, sector, 'miles');
         const tipLobe = signalStrengthAtOffset(POLE_CENTER, rangeMeters * 0.92, 0, sector, 'miles');
-        expect(midLobe).toBeGreaterThan(0.4);
-        expect(farLobe).toBeGreaterThan(0.2);
-        expect(tipLobe).toBeGreaterThan(0.12);
+        expect(midLobe).toBeGreaterThan(0.45);
+        expect(farLobe).toBeGreaterThan(0.28);
+        expect(tipLobe).toBeGreaterThan(0.2);
     });
 
     it('ramps weak signal from light blue fringe to dark blue', () => {

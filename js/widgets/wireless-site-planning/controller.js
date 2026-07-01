@@ -20,16 +20,16 @@ import {
 
 const ANTENNA_SECTOR_LAYER_STYLE = {
     mode: 'smart',
-    fillColor: '#38bdf8',
-    strokeColor: '#0ea5e9',
-    fillOpacity: 0.35,
+    fillColor: '#e879f9',
+    strokeColor: '#c026d3',
+    fillOpacity: 0.4,
     strokeWidth: 2,
     strokeOpacity: 0.9,
     smart: {
         defaultStyle: {
-            fillColor: '#38bdf8',
-            strokeColor: '#0ea5e9',
-            fillOpacity: 0.35,
+            fillColor: '#e879f9',
+            strokeColor: '#c026d3',
+            fillOpacity: 0.4,
             strokeWidth: 2,
             strokeOpacity: 0.9
         },
@@ -39,8 +39,8 @@ const ANTENNA_SECTOR_LAYER_STYLE = {
             field: 'antenna_number',
             channel: 'both',
             classes: [
-                { value: '1', color: '#38bdf8', style: { fillColor: '#38bdf8', strokeColor: '#0ea5e9' } },
-                { value: '2', color: '#c084fc', style: { fillColor: '#c084fc', strokeColor: '#9333ea' } }
+                { value: '1', color: '#e879f9', style: { fillColor: '#e879f9', strokeColor: '#c026d3' } },
+                { value: '2', color: '#bef264', style: { fillColor: '#bef264', strokeColor: '#65a30d' } }
             ]
         }],
         filterRules: []

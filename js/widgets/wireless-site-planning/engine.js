@@ -170,8 +170,8 @@ export const ANTENNA_INDICATOR_DEFAULTS = {
 };
 
 export const ANTENNA_INDICATOR_COLORS = {
-    1: { fill: '#38bdf8', stroke: '#0ea5e9', fillOpacity: 0.35 },
-    2: { fill: '#c084fc', stroke: '#9333ea', fillOpacity: 0.35 }
+    1: { fill: '#e879f9', stroke: '#c026d3', fillOpacity: 0.4 },
+    2: { fill: '#bef264', stroke: '#65a30d', fillOpacity: 0.4 }
 };
 
 /**
@@ -276,13 +276,37 @@ export function signalStrengthAt(relativeAngleDeg, distance, range, sectorWidth 
     return angularGain * radialGain;
 }
 
-/** Tuning for coverage raster — matches radiation-pattern outline envelope. */
+/** Side/back petal gain only (excludes main lobe). */
+function sideLobePetalGainOnly(relativeAngleDeg) {
+    let linear = 0;
+
+    for (const lobe of RADIATION_SIDE_LOBES) {
+        linear = Math.max(linear, petalGain(relativeAngleDeg, lobe.offset, lobe.peakDb, lobe.width));
+    }
+
+    for (const lobe of RADIATION_BACK_PETALS) {
+        linear = Math.max(linear, petalGain(relativeAngleDeg, lobe.offset, lobe.peakDb, lobe.width));
+    }
+
+    return linear;
+}
+
+/** Tuning for coverage raster — main lobe follows outline; side lobes spread & boost for visibility. */
 export const COVERAGE_DISPLAY_DEFAULTS = {
     /** Higher = slower falloff; warm colors reach farther along the main lobe. */
-    radialPower: 1.18,
+    radialPower: 1.42,
     minRadiusFactor: LOBE_PATTERN_DEFAULTS.outlineMinRadiusFactor,
     /** < 1 lifts mid-range display values toward warm colors. */
-    signalGamma: 0.76
+    signalGamma: 0.65,
+    /** Side lobe heatmap may extend slightly past the red outline (display only). */
+    sideLobeClipSpread: 1.12,
+    /** Steeper falloff — keeps side lobes compact, not long tails. */
+    sideLobeRadialPower: 1.45,
+    /** Extra fill near the pole where side lobes originate. */
+    sideLobeNearBoost: 1.35,
+    /** Display gain boost so side lobes read stronger on the map. */
+    sideLobeSignalBoost: 2.2,
+    sideLobeGamma: 0.68
 };
 
 /**
@@ -299,10 +323,39 @@ export function signalStrengthForCoverageDisplay(
     const {
         radialPower = COVERAGE_DISPLAY_DEFAULTS.radialPower,
         minRadiusFactor = COVERAGE_DISPLAY_DEFAULTS.minRadiusFactor,
-        signalGamma = COVERAGE_DISPLAY_DEFAULTS.signalGamma
+        signalGamma = COVERAGE_DISPLAY_DEFAULTS.signalGamma,
+        sideLobeClipSpread = COVERAGE_DISPLAY_DEFAULTS.sideLobeClipSpread,
+        sideLobeRadialPower = COVERAGE_DISPLAY_DEFAULTS.sideLobeRadialPower,
+        sideLobeNearBoost = COVERAGE_DISPLAY_DEFAULTS.sideLobeNearBoost,
+        sideLobeSignalBoost = COVERAGE_DISPLAY_DEFAULTS.sideLobeSignalBoost,
+        sideLobeGamma = COVERAGE_DISPLAY_DEFAULTS.sideLobeGamma
     } = options;
 
-    const angularGain = radiationPatternGain(relativeAngleDeg, sectorWidth);
+    const mainGain = mainLobeLinearGain(relativeAngleDeg, sectorWidth);
+    const sideGain = sideLobePetalGainOnly(relativeAngleDeg);
+    const angularGain = Math.max(mainGain, sideGain);
+    const isSideLobeDominant = sideGain >= 0.025 && sideGain >= mainGain * 0.72;
+
+    if (isSideLobeDominant) {
+        const outlineRadius = range * Math.max(sideGain, minRadiusFactor);
+        const clipRadius = outlineRadius * sideLobeClipSpread;
+
+        if (distance >= clipRadius || outlineRadius <= 0) return 0;
+
+        const t = distance / outlineRadius;
+        let radialGain = 1 - Math.pow(Math.min(t, 1), sideLobeRadialPower);
+        if (t > 1) {
+            radialGain *= Math.max(0, 1 - (t - 1) / (sideLobeClipSpread - 1));
+        }
+
+        const nearBoost = 1 + sideLobeNearBoost * Math.max(0, 1 - t);
+        let signal = sideGain * radialGain * nearBoost;
+        if (signal <= 0) return 0;
+
+        signal = Math.min(1, signal * sideLobeSignalBoost);
+        return Math.pow(signal, sideLobeGamma);
+    }
+
     const envelopeRadius = range * Math.max(angularGain, minRadiusFactor);
 
     if (distance >= envelopeRadius || envelopeRadius <= 0) return 0;

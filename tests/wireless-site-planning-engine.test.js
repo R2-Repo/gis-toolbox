@@ -137,7 +137,7 @@ describe('wireless-site-planning geometry', () => {
         const a1 = createAntennaIndicatorSector(POLE_CENTER, { ...base, sectorId: 's1', antennaNumber: 1 }, 'meters');
         const a2 = createAntennaIndicatorSector(POLE_CENTER, { ...base, sectorId: 's2', antennaNumber: 2 }, 'meters');
         expect(a1.properties.fill).not.toBe(a2.properties.fill);
-        expect(a2.properties.fill).toBe('#c084fc');
+        expect(a2.properties.fill).toBe('#bef264');
     });
 
     it('tags indicator sectors for preview rendering', () => {
