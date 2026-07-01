@@ -101,6 +101,25 @@ const LAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0
 
 const POINT_SYMBOL_NAMES = ['circle', 'square', 'triangle', 'diamond', 'star', 'pin'];
 
+const WIRELESS_COVERAGE_HEATMAP_PAINT = {
+    'heatmap-weight': ['interpolate', ['linear'], ['get', 'signal'], 0, 0, 1, 1],
+    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 14, 1.4],
+    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 36],
+    'heatmap-opacity': 0.78,
+    'heatmap-color': [
+        'interpolate',
+        ['linear'],
+        ['heatmap-density'],
+        0, 'rgba(0,0,255,0)',
+        0.12, '#1d4ed8',
+        0.28, '#06b6d4',
+        0.45, '#22c55e',
+        0.62, '#eab308',
+        0.78, '#f97316',
+        1, '#ef4444'
+    ]
+};
+
 /** MapLibre filter (boolean expression): geometry-type is one of the given GeoJSON types */
 function _geomTypesFilter(types) {
     return ['in', ['geometry-type'], ['literal', types]];
@@ -728,6 +747,53 @@ class MapManager {
             featureCount: dataset.geojson.features.length,
             renderParts: taggedFeatures.length
         });
+        bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
+    }
+
+    /** Permanent wireless signal heatmap layer (point samples with signal property). */
+    addCoverageHeatmapLayer(dataset, colorIndex = 0, { fit = false } = {}) {
+        if (!this.map || !dataset?.geojson) return;
+
+        this.removeLayer(dataset.id);
+
+        const taggedFeatures = _tagFeaturesForMap(dataset).filter(
+            (f) => f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
+        );
+        const geojson = { type: 'FeatureCollection', features: taggedFeatures };
+        const sourceId = `src-${dataset.id}`;
+        const heatId = `${dataset.id}-heat`;
+
+        this.map.addSource(sourceId, { type: 'geojson', data: geojson });
+        this.map.addLayer({
+            id: heatId,
+            type: 'heatmap',
+            source: sourceId,
+            paint: WIRELESS_COVERAGE_HEATMAP_PAINT
+        });
+
+        this.dataLayers.set(dataset.id, {
+            sourceId,
+            layerIds: [heatId],
+            chunkSources: [{ sourceId, layerIds: [heatId] }],
+            colorIndex,
+            geojson,
+            scaleRange: normalizeScaleRange(dataset)
+        });
+        this._storeLayerScaleRange(dataset);
+        this._layerNames.set(dataset.id, dataset.name);
+
+        if (fit && taggedFeatures.length) {
+            try {
+                const bbox = turf.bbox(geojson);
+                if (bbox && isFinite(bbox[0])) {
+                    this.map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 30, maxZoom: 16 });
+                }
+            } catch (e) {
+                logger.warn('Map', 'Could not fit heatmap bounds', { error: e.message });
+            }
+        }
+
+        logger.info('Map', 'Coverage heatmap layer added', { name: dataset.name, points: taggedFeatures.length });
         bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
     }
 
@@ -2847,39 +2913,52 @@ class MapManager {
     }
 
     /**
-     * Wireless site planning preview: blue square clients, red poles, light red unused poles, green sectors.
-     * Features should set properties._preview to draw_client | covered | uncovered | draw_pole | pole | unused_pole | sector | assignment.
+     * Wireless site planning preview: heatmap signal, pattern outline, blue square clients, red poles.
+     * _preview: draw_client | covered | uncovered | draw_pole | pole | unused_pole | coverage_heat | pattern_outline | assignment.
      */
     showWirelessPlanningPreview(geojson, duration = 0) {
         const srcId = this._nextId('temp');
         this.map.addSource(srcId, { type: 'geojson', data: geojson });
         const layerIds = [];
 
-        const sectorFillId = srcId + '-sector-fill';
+        const heatmapId = srcId + '-coverage-heat';
         this.map.addLayer({
-            id: sectorFillId,
-            type: 'fill',
+            id: heatmapId,
+            type: 'heatmap',
             source: srcId,
             filter: ['all',
-                _geomTypesFilter(['Polygon', 'MultiPolygon']),
-                ['==', ['get', '_preview'], 'sector']
+                _geomTypesFilter(['Point', 'MultiPoint']),
+                ['==', ['get', '_preview'], 'coverage_heat']
             ],
-            paint: { 'fill-color': '#22c55e', 'fill-opacity': 0.25 }
+            paint: WIRELESS_COVERAGE_HEATMAP_PAINT
         });
-        layerIds.push(sectorFillId);
+        layerIds.push(heatmapId);
 
-        const sectorOutlineId = srcId + '-sector-outline';
+        const patternOutlineId = srcId + '-pattern-outline';
         this.map.addLayer({
-            id: sectorOutlineId,
+            id: patternOutlineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['LineString', 'MultiLineString']),
+                ['==', ['get', '_preview'], 'pattern_outline']
+            ],
+            paint: { 'line-color': '#dc2626', 'line-width': 2.5, 'line-opacity': 0.95 }
+        });
+        layerIds.push(patternOutlineId);
+
+        const patternOutlineLegacyId = srcId + '-pattern-outline-poly';
+        this.map.addLayer({
+            id: patternOutlineLegacyId,
             type: 'line',
             source: srcId,
             filter: ['all',
                 _geomTypesFilter(['Polygon', 'MultiPolygon']),
-                ['==', ['get', '_preview'], 'sector']
+                ['==', ['get', '_preview'], 'pattern_outline']
             ],
-            paint: { 'line-color': '#16a34a', 'line-width': 2 }
+            paint: { 'line-color': '#dc2626', 'line-width': 2.5, 'line-opacity': 0.95 }
         });
-        layerIds.push(sectorOutlineId);
+        layerIds.push(patternOutlineLegacyId);
 
         const assignmentLineId = srcId + '-assignment-line';
         this.map.addLayer({

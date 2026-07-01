@@ -122,7 +122,7 @@ export function PoleSectorOptimizerPanel({
     const [poleStats, setPoleStats] = useState(null);
     const [units, setUnits] = useState('miles');
     const [defaultRange, setDefaultRange] = useState('1');
-    const [defaultSectorWidth, setDefaultSectorWidth] = useState('90');
+    const [defaultSectorWidth, setDefaultSectorWidth] = useState('45');
     const [sectorWidthMode, setSectorWidthMode] = useState('fixed');
     const [maxAntennasPerPole, setMaxAntennasPerPole] = useState(1);
     const [optimizationGoal, setOptimizationGoal] = useState('balanced');
@@ -495,7 +495,7 @@ export function PoleSectorOptimizerPanel({
                     <div>Recommended antennas: {results.summary?.recommendedAntennas ?? 0}</div>
                     <div>Coverage: {results.summary?.coveragePercent ?? 0}%</div>
                     <p style={{ marginTop: 12, color: 'var(--text-muted)' }}>
-                        The map preview shows recommended poles, sector coverage areas, covered locations, and uncovered locations.
+                        The map preview shows signal heatmaps, radiation patterns, recommended poles, and client locations.
                         Click Create output layers to add permanent layers to the map.
                     </p>
                 </div>

@@ -78,6 +78,24 @@ function addDerivedLayer(ctx, name, fc, options = {}) {
     return dataset;
 }
 
+function addCoverageHeatmapLayer(ctx, name, fc, options = {}) {
+    const dataset = ctx.createSpatialDataset(name, fc, {
+        format: 'derived',
+        widget: 'wireless-site-planning',
+        coverageType: 'heatmap',
+        ...(options.source || {})
+    });
+    ctx.addLayer(dataset);
+    const index = ctx.getLayers().indexOf(dataset);
+    if (ctx.mapService.addCoverageHeatmapLayer) {
+        ctx.mapService.addCoverageHeatmapLayer(dataset, index, { fit: options.fit ?? false });
+    } else {
+        ctx.mapService.addLayer(dataset, index, { fit: options.fit ?? false });
+    }
+    ctx.refreshUI();
+    return dataset;
+}
+
 function buildDrawPreviewGeojson({ drawnClients = [], drawnPoles = [] } = {}) {
     const features = [
         ...drawnClients.map((feature) => ({
@@ -144,7 +162,7 @@ function buildDrawnClientFeature(coord, seq) {
 function buildDrawnPoleFeature(coord, seq, settings = {}) {
     const defaults = createDefaultPoleSectorAttributes(
         parseFloat(settings.defaultRange) || 1,
-        parseFloat(settings.defaultSectorWidth) || 90,
+        parseFloat(settings.defaultSectorWidth) || 45,
         settings.units || 'miles'
     );
     return {
@@ -286,9 +304,17 @@ export async function openWirelessSitePlanning(ctx) {
                 });
 
                 let created = 0;
+                let fitNext = true;
+
+                if (layers.coverageHeatmap?.features?.length) {
+                    addCoverageHeatmapLayer(ctx, 'Wireless Signal Heatmap', layers.coverageHeatmap, { fit: fitNext });
+                    fitNext = false;
+                    created++;
+                }
+
                 const layerDefs = [
+                    { name: 'Wireless Radiation Pattern', fc: layers.sectorCoverage, style: { mode: 'simple', strokeColor: '#dc2626', strokeWidth: 2.5, fillOpacity: 0 } },
                     { name: 'Wireless Recommended Poles', fc: layers.recommendedPoles, style: { mode: 'simple', fillColor: '#ef4444', strokeColor: '#dc2626' } },
-                    { name: 'Wireless Sector Coverage', fc: layers.sectorCoverage, style: { mode: 'simple', fillColor: '#22c55e', strokeColor: '#16a34a', fillOpacity: 0.25 } },
                     { name: 'Wireless Covered Clients', fc: layers.coveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } },
                     { name: 'Wireless Uncovered Clients', fc: layers.uncoveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } }
                 ];
@@ -304,9 +330,10 @@ export async function openWirelessSitePlanning(ctx) {
                 layerDefs.forEach((def) => {
                     if (def.fc.features.length) {
                         addDerivedLayer(ctx, def.name, def.fc, {
-                            fit: created === 0,
+                            fit: fitNext,
                             style: def.style
                         });
+                        fitNext = false;
                         created++;
                     }
                 });

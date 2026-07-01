@@ -252,6 +252,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         showWirelessPlanningPreview(geojson, duration) {
             return mapAdapter.showWirelessPlanningPreview?.(geojson, duration);
         },
+        addCoverageHeatmapLayer(dataset, colorIndex, options) {
+            return mapAdapter.addCoverageHeatmapLayer?.(dataset, colorIndex, options);
+        },
         showProjectStationingPreview(geojson, duration) {
             return mapAdapter.showProjectStationingPreview?.(geojson, duration);
         },

@@ -159,7 +159,111 @@ export function distanceToMeters(value, units) {
     }
 }
 
-export function createDefaultPoleSectorAttributes(defaultRange = 1, defaultWidth = 90, units = 'miles') {
+export const DEFAULT_SECTOR_WIDTH = 45;
+
+/**
+ * Forward side lobes (display only).
+ * Positive offsets only — bearing trace uses symmetric angleDelta from boresight.
+ * Narrow widths + wider spacing so three distinct bumps appear per side.
+ */
+export const RADIATION_SIDE_LOBES = [
+    { offset: 53, peakDb: -11, width: 3.5 },
+    { offset: 69, peakDb: -9, width: 4 },
+    { offset: 85, peakDb: -12, width: 3.5 }
+];
+
+/** Back-lobe petals — kept minimal so rear response is nearly suppressed (display only). */
+export const RADIATION_BACK_PETALS = [];
+
+export const LOBE_PATTERN_DEFAULTS = {
+    radialSteps: 14,
+    angularSteps: 48,
+    signalThreshold: 0.025,
+    outlineSteps: 180,
+    /** Minimum radius fraction in nulls — keeps outline smooth without a visible back lobe. */
+    outlineMinRadiusFactor: 0.002
+};
+
+/** Display-only — main lobe beamwidth as fraction of sector width (lower = skinnier). */
+const MAIN_LOBE_PATTERN_HPBW_FACTOR = 0.42;
+/** Cap display HPBW so side lobes are never swallowed by the main lobe skirt. */
+const MAIN_LOBE_PATTERN_MAX_HPBW = 22;
+/** Extra main-lobe sharpness for the radiation pattern trace (display only). */
+const MAIN_LOBE_PATTERN_SHARPNESS = 1.35;
+/** Elliptical tip blend — fraction of half-beamwidth (higher = rounder far tip). */
+const MAIN_LOBE_TIP_ROUND_SIGMA = 0.72;
+
+function dbToLinear(db) {
+    return Math.pow(10, db / 10);
+}
+
+function petalGain(relativeAngleDeg, centerOffset, peakDb, widthDeg) {
+    const delta = Math.abs(relativeAngleDeg - Math.abs(centerOffset));
+    return dbToLinear(peakDb) * Math.exp(-0.5 * Math.pow(delta / widthDeg, 2));
+}
+
+function mainLobeEllipticalGain(absRelDeg, halfDeg) {
+    if (absRelDeg >= halfDeg * 1.05) return 0;
+    const relRad = absRelDeg * (Math.PI / 180);
+    const halfRad = halfDeg * (Math.PI / 180);
+    const sinHalf = Math.sin(Math.max(halfRad, 0.03));
+    const sinRel = Math.sin(Math.min(relRad, (Math.PI / 2) - 0.02));
+    const ratio = sinRel / sinHalf;
+    return Math.sqrt(Math.max(0, 1 - ratio * ratio));
+}
+
+function mainLobeLinearGain(relativeAngleDeg, sectorWidth) {
+    const hpbw = Math.min(
+        Math.max(sectorWidth * MAIN_LOBE_PATTERN_HPBW_FACTOR, 10),
+        MAIN_LOBE_PATTERN_MAX_HPBW
+    );
+    const halfDeg = hpbw / 2;
+    const halfRad = halfDeg * (Math.PI / 180);
+    const cosHalf = Math.cos(halfRad);
+    const n = (cosHalf > 0.01 ? Math.log(0.5) / Math.log(cosHalf) : 8) * MAIN_LOBE_PATTERN_SHARPNESS;
+    const relRad = relativeAngleDeg * (Math.PI / 180);
+    const cosVal = Math.cos(relRad);
+    if (Math.abs(relativeAngleDeg) >= 92 || cosVal <= 0) return 0;
+
+    const absRel = Math.abs(relativeAngleDeg);
+    const cosGain = Math.pow(cosVal, Math.max(n, 2));
+    const ellGain = mainLobeEllipticalGain(absRel, halfDeg);
+    const sigma = halfDeg * MAIN_LOBE_TIP_ROUND_SIGMA;
+    const roundWeight = Math.exp(-0.5 * Math.pow(absRel / sigma, 2));
+
+    return Math.min(1, cosGain * (1 - roundWeight) + ellGain * roundWeight);
+}
+
+/** Linear gain (0–1) — envelope of main lobe + side/back petal lobes. */
+export function radiationPatternGain(relativeAngleDeg, sectorWidth = DEFAULT_SECTOR_WIDTH) {
+    let linear = mainLobeLinearGain(relativeAngleDeg, sectorWidth);
+
+    for (const lobe of RADIATION_SIDE_LOBES) {
+        linear = Math.max(linear, petalGain(relativeAngleDeg, lobe.offset, lobe.peakDb, lobe.width));
+    }
+
+    for (const lobe of RADIATION_BACK_PETALS) {
+        linear = Math.max(linear, petalGain(relativeAngleDeg, lobe.offset, lobe.peakDb, lobe.width));
+    }
+
+    return Math.min(1, linear);
+}
+
+/** Gain in dB relative to boresight (0 dB = peak). For future gradient styling. */
+export function radiationPatternGainDb(relativeAngleDeg, sectorWidth = DEFAULT_SECTOR_WIDTH) {
+    const linear = radiationPatternGain(relativeAngleDeg, sectorWidth);
+    if (linear <= 1e-6) return -40;
+    return Math.max(-40, 10 * Math.log10(linear));
+}
+
+/** Combined angular + radial signal strength for heatmap sampling (display only). */
+export function signalStrengthAt(relativeAngleDeg, distance, range, sectorWidth = DEFAULT_SECTOR_WIDTH) {
+    const angularGain = radiationPatternGain(relativeAngleDeg, sectorWidth);
+    const radialGain = Math.max(0, 1 - Math.pow(distance / range, 1.35));
+    return angularGain * radialGain;
+}
+
+export function createDefaultPoleSectorAttributes(defaultRange = 1, defaultWidth = DEFAULT_SECTOR_WIDTH, units = 'miles') {
     return {
         antenna_count: 1,
         antenna_1_enabled: true,
@@ -252,7 +356,7 @@ export function normalizePolePoints(features = [], defaults = {}) {
 
     const defaultAttrs = createDefaultPoleSectorAttributes(
         defaults.defaultRange ?? 1,
-        defaults.defaultWidth ?? 90,
+        defaults.defaultWidth ?? DEFAULT_SECTOR_WIDTH,
         defaults.units ?? 'miles'
     );
 
@@ -283,12 +387,12 @@ export function normalizePolePoints(features = [], defaults = {}) {
             antenna_count: parseInt(props.antenna_count ?? sectorDefaults.antenna_count ?? 1, 10) || 1,
             antenna_1_enabled: props.antenna_1_enabled ?? sectorDefaults.antenna_1_enabled ?? true,
             antenna_1_azimuth: parseFloat(props.antenna_1_azimuth ?? sectorDefaults.antenna_1_azimuth ?? 0) || 0,
-            antenna_1_sector_width: parseFloat(props.antenna_1_sector_width ?? sectorDefaults.antenna_1_sector_width ?? defaults.defaultWidth ?? 90) || 90,
+            antenna_1_sector_width: parseFloat(props.antenna_1_sector_width ?? sectorDefaults.antenna_1_sector_width ?? defaults.defaultWidth ?? DEFAULT_SECTOR_WIDTH) || DEFAULT_SECTOR_WIDTH,
             antenna_1_range: parseFloat(props.antenna_1_range ?? sectorDefaults.antenna_1_range ?? defaults.defaultRange ?? 1) || 1,
             antenna_1_label: props.antenna_1_label ?? sectorDefaults.antenna_1_label ?? 'Sector A',
             antenna_2_enabled: props.antenna_2_enabled ?? sectorDefaults.antenna_2_enabled ?? false,
             antenna_2_azimuth: parseFloat(props.antenna_2_azimuth ?? sectorDefaults.antenna_2_azimuth ?? 180) || 180,
-            antenna_2_sector_width: parseFloat(props.antenna_2_sector_width ?? sectorDefaults.antenna_2_sector_width ?? defaults.defaultWidth ?? 90) || 90,
+            antenna_2_sector_width: parseFloat(props.antenna_2_sector_width ?? sectorDefaults.antenna_2_sector_width ?? defaults.defaultWidth ?? DEFAULT_SECTOR_WIDTH) || DEFAULT_SECTOR_WIDTH,
             antenna_2_range: parseFloat(props.antenna_2_range ?? sectorDefaults.antenna_2_range ?? defaults.defaultRange ?? 1) || 1,
             antenna_2_label: props.antenna_2_label ?? sectorDefaults.antenna_2_label ?? 'Sector B',
             hasExistingAttrs: hasAttrs,
@@ -379,6 +483,142 @@ export function createSectorPolygon(pole, azimuth, width, range, units = 'miles'
     const startBearing = azimuth - half;
     const endBearing = azimuth + half;
     return turf.sector(center, range, startBearing, endBearing, { units, steps });
+}
+
+/** @deprecated Optimizer wedge helper — kept for tests. Display uses radiation pattern. */
+export function lobeRangeFactor(angleDeltaDeg, sectorWidth, lobePower = 2) {
+    if (sectorWidth >= 360) return 1;
+    const half = sectorWidth / 2;
+    if (angleDeltaDeg > half) return 0;
+    if (half <= 0) return 1;
+    const t = angleDeltaDeg / half;
+    return Math.pow(Math.cos((Math.PI / 2) * t), lobePower);
+}
+
+/**
+ * Smooth polar-pattern trace (LineString) — like a classic radiation pattern plot.
+ */
+export function createRadiationPatternOutline(pole, azimuth, sectorWidth, range, units = 'miles', options = {}) {
+    const {
+        outlineSteps = LOBE_PATTERN_DEFAULTS.outlineSteps,
+        outlineMinRadiusFactor = LOBE_PATTERN_DEFAULTS.outlineMinRadiusFactor
+    } = options;
+    const center = turf.point([pole.lon, pole.lat]);
+
+    if (sectorWidth >= 360) {
+        const circle = turf.circle(center, range, { units, steps: Math.max(outlineSteps, 32) });
+        return {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: circle.geometry.coordinates[0] },
+            properties: { coverage_shape: 'radiation_pattern' }
+        };
+    }
+
+    const coords = [];
+    for (let i = 0; i <= outlineSteps; i++) {
+        const bearing = (360 * i) / outlineSteps;
+        const rel = angleDelta(bearing, azimuth);
+        const gain = radiationPatternGain(rel, sectorWidth);
+        const dist = range * Math.max(gain, outlineMinRadiusFactor);
+        coords.push(turf.destination(center, dist, bearing, { units }).geometry.coordinates);
+    }
+    coords.push(coords[0]);
+
+    return {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: { coverage_shape: 'radiation_pattern' }
+    };
+}
+
+/** Point samples for heatmap layers — signal property 0–1. */
+export function createAntennaHeatmapPoints(pole, sector, units = 'miles', options = {}) {
+    const {
+        radialSteps = LOBE_PATTERN_DEFAULTS.radialSteps,
+        angularSteps = LOBE_PATTERN_DEFAULTS.angularSteps,
+        signalThreshold = LOBE_PATTERN_DEFAULTS.signalThreshold
+    } = options;
+    const { azimuth, sectorWidth, range } = sector;
+    const center = turf.point([pole.lon, pole.lat]);
+    const features = [];
+
+    for (let ri = 1; ri <= radialSteps; ri++) {
+        const dist = (range * ri) / radialSteps;
+        for (let ai = 0; ai < angularSteps; ai++) {
+            const bearing = (360 * ai) / angularSteps;
+            const rel = angleDelta(bearing, azimuth);
+            const signal = signalStrengthAt(rel, dist, range, sectorWidth);
+            if (signal < signalThreshold) continue;
+
+            const point = turf.destination(center, dist, bearing, { units });
+            features.push({
+                type: 'Feature',
+                geometry: point.geometry,
+                properties: {
+                    signal: Math.round(signal * 1000) / 1000,
+                    pole_id: pole.id,
+                    sector_id: sector.sectorId,
+                    antenna_number: sector.antennaNumber ?? 1,
+                    coverage_shape: 'heatmap'
+                }
+            });
+        }
+    }
+
+    return features;
+}
+
+/** @deprecated Use createRadiationPatternOutline — kept for tests. */
+export function createAntennaLobePolygon(pole, azimuth, width, range, units = 'miles', options = {}) {
+    return createRadiationPatternOutline(pole, azimuth, width, range, units, options);
+}
+
+function buildCoverageVisualProperties(sector, pole, visualType, { preview = false } = {}) {
+    const props = {
+        pole_id: pole.id,
+        sector_id: sector.sectorId,
+        antenna_number: sector.antennaNumber ?? 1,
+        azimuth: sector.azimuth,
+        sector_width: sector.sectorWidth,
+        range: sector.range,
+        visual_type: visualType,
+        coverage_shape: visualType === 'heatmap' ? 'heatmap' : 'radiation_pattern'
+    };
+    if (visualType === 'outline') {
+        props.covered_client_count = sector.coveredClients?.length ?? 0;
+    }
+    if (preview) {
+        props._preview = visualType === 'heatmap' ? 'coverage_heat' : 'pattern_outline';
+    }
+    return props;
+}
+
+/** Heatmap points + radiation pattern trace for map display. */
+export function createAntennaCoverageFeatures(pole, sector, units = 'miles', options = {}) {
+    const features = [];
+
+    createAntennaHeatmapPoints(pole, sector, units, options).forEach((point) => {
+        point.properties = {
+            ...point.properties,
+            ...buildCoverageVisualProperties(sector, pole, 'heatmap', options)
+        };
+        features.push(point);
+    });
+
+    const outline = createRadiationPatternOutline(
+        pole,
+        sector.azimuth,
+        sector.sectorWidth,
+        sector.range,
+        units,
+        options
+    );
+    if (outline) {
+        outline.properties = buildCoverageVisualProperties(sector, pole, 'outline', options);
+        features.push(outline);
+    }
+
+    return features;
 }
 
 export function isPointInsideSector(client, pole, sector, units = 'miles') {
@@ -514,7 +754,7 @@ export function findBestSectorForPole(pole, uncoveredClients, settings = {}) {
     const units = settings.units || 'miles';
     const range = parseFloat(settings.defaultRange) || 1;
     const mode = settings.sectorWidthMode || 'fixed';
-    const fixedWidth = parseFloat(settings.defaultSectorWidth) || 90;
+    const fixedWidth = parseFloat(settings.defaultSectorWidth) || DEFAULT_SECTOR_WIDTH;
 
     const inRange = uncoveredClients.filter((client) => calculateDistance(pole, client, units) <= range);
     if (!inRange.length) return null;
@@ -743,24 +983,33 @@ export function buildWirelessPlanningOutputLayers(result, options = {}) {
         type: 'FeatureCollection',
         features: result.selectedPoles.flatMap((entry) =>
             entry.sectors.map((sector) => {
-                const polygon = createSectorPolygon(
+                const outline = createRadiationPatternOutline(
                     entry.pole,
                     sector.azimuth,
                     sector.sectorWidth,
                     sector.range,
                     units
                 );
-                polygon.properties = {
+                if (!outline) return null;
+                outline.properties = {
                     pole_id: entry.pole.id,
                     sector_id: sector.sectorId,
                     antenna_number: sector.antennaNumber ?? 1,
                     azimuth: sector.azimuth,
                     sector_width: sector.sectorWidth,
                     range: sector.range,
-                    covered_client_count: sector.coveredClients.length
+                    covered_client_count: sector.coveredClients.length,
+                    coverage_shape: 'radiation_pattern'
                 };
-                return polygon;
-            })
+                return outline;
+            }).filter(Boolean)
+        )
+    };
+
+    const coverageHeatmap = {
+        type: 'FeatureCollection',
+        features: result.selectedPoles.flatMap((entry) =>
+            entry.sectors.flatMap((sector) => createAntennaHeatmapPoints(entry.pole, sector, units))
         )
     };
 
@@ -801,6 +1050,7 @@ export function buildWirelessPlanningOutputLayers(result, options = {}) {
     return {
         recommendedPoles,
         sectorCoverage,
+        coverageHeatmap,
         clientAssignments,
         coveredClients,
         uncoveredClients
@@ -816,17 +1066,8 @@ export function buildPreviewGeojson(result, options = {}) {
 
     result.selectedPoles.forEach((entry) => {
         entry.sectors.forEach((sector) => {
-            const polygon = createSectorPolygon(
-                entry.pole,
-                sector.azimuth,
-                sector.sectorWidth,
-                sector.range,
-                units
-            );
-            polygon.properties = {
-                _preview: 'sector'
-            };
-            features.push(polygon);
+            createAntennaCoverageFeatures(entry.pole, sector, units, { preview: true })
+                .forEach((feature) => features.push(feature));
         });
 
         features.push(pointFeature(entry.pole, {

@@ -7,6 +7,14 @@ import {
     calculateDistance,
     createDefaultPoleSectorAttributes,
     createSectorPolygon,
+    createAntennaLobePolygon,
+    createAntennaCoverageFeatures,
+    createAntennaHeatmapPoints,
+    createRadiationPatternOutline,
+    lobeRangeFactor,
+    radiationPatternGain,
+    radiationPatternGainDb,
+    signalStrengthAt,
     findBestSectorForPole,
     findBestTwoSectorsForPole,
     fitSectorWidthForClients,
@@ -90,6 +98,81 @@ describe('wireless-site-planning geometry', () => {
         const polygon = createSectorPolygon(POLE_CENTER, 90, 90, 1, 'miles', 16);
         expect(polygon.geometry.type).toBe('Polygon');
         expect(polygon.geometry.coordinates[0].length).toBeGreaterThan(3);
+    });
+
+    it('creates a radiation pattern outline with a dominant main lobe and minimal back response', () => {
+        const outline = createRadiationPatternOutline(POLE_CENTER, 0, 45, 1, 'miles', { outlineSteps: 144 });
+        expect(outline.geometry.type).toBe('LineString');
+        expect(outline.properties.coverage_shape).toBe('radiation_pattern');
+
+        const coords = outline.geometry.coordinates;
+        const pole = [POLE_CENTER.lon, POLE_CENTER.lat];
+        const distNearBearing = (targetBearing) => {
+            let bestDiff = Infinity;
+            let bestDist = 0;
+            for (const coord of coords) {
+                const point = { lat: coord[1], lon: coord[0] };
+                const bearing = calculateBearing(POLE_CENTER, point);
+                const diff = Math.abs(((bearing - targetBearing + 540) % 360) - 180);
+                const dist = calculateDistance(POLE_CENTER, point, 'miles');
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestDist = dist;
+                }
+            }
+            return bestDist;
+        };
+
+        const maxDist = Math.max(...coords.map((coord) => calculateDistance(
+            POLE_CENTER,
+            { lat: coord[1], lon: coord[0] },
+            'miles'
+        )));
+        const forwardDist = distNearBearing(0);
+        const backDist = distNearBearing(180);
+
+        expect(maxDist).toBeGreaterThan(0.85);
+        expect(forwardDist).toBeGreaterThan(0.85);
+        expect(backDist).toBeLessThan(0.02);
+        expect(backDist).toBeLessThan(forwardDist * 0.05);
+        expect(radiationPatternGain(0, 45)).toBeCloseTo(1, 1);
+        expect(radiationPatternGain(62, 45)).toBeLessThan(0.05);
+        expect(radiationPatternGain(0, 45)).toBeGreaterThan(radiationPatternGain(90, 45) * 10);
+        expect(radiationPatternGain(180, 45)).toBeLessThan(0.01);
+        expect(radiationPatternGainDb(0, 45)).toBeCloseTo(0, 0);
+        expect(radiationPatternGainDb(100, 45)).toBeLessThan(-20);
+
+        expect(radiationPatternGain(53, 45)).toBeGreaterThan(0.06);
+        expect(radiationPatternGain(69, 45)).toBeGreaterThan(0.1);
+        expect(radiationPatternGain(85, 45)).toBeGreaterThan(0.05);
+        expect(radiationPatternGain(69, 45)).toBeGreaterThan(radiationPatternGain(53, 45));
+        expect(radiationPatternGain(69, 45)).toBeGreaterThan(radiationPatternGain(85, 45));
+        expect(radiationPatternGain(61, 45)).toBeLessThan(radiationPatternGain(53, 45) * 0.75);
+        expect(radiationPatternGain(77, 45)).toBeLessThan(radiationPatternGain(69, 45) * 0.75);
+
+        const atPole = coords.filter((coord) =>
+            coord[0] === pole[0] && coord[1] === pole[1]
+        ).length;
+        expect(atPole).toBeLessThanOrEqual(2);
+    });
+
+    it('builds heatmap points and pattern outline for display', () => {
+        const sector = {
+            sectorId: 'p1-sector-a',
+            azimuth: 0,
+            sectorWidth: 45,
+            range: 1,
+            antennaNumber: 1,
+            coveredClients: [{ id: 'c1' }]
+        };
+        const heat = createAntennaHeatmapPoints(POLE_CENTER, sector, 'miles');
+        expect(heat.length).toBeGreaterThan(20);
+        expect(heat[0].properties.signal).toBeGreaterThan(0);
+
+        const features = createAntennaCoverageFeatures(POLE_CENTER, sector, 'miles', { preview: true });
+        expect(features.some((f) => f.properties._preview === 'coverage_heat')).toBe(true);
+        expect(features.filter((f) => f.properties._preview === 'pattern_outline')).toHaveLength(1);
+        expect(features.some((f) => f.properties.coverage_shape === 'main_lobe_fill')).toBe(false);
     });
 
     it('detects whether a client point is inside a sector', () => {
@@ -261,8 +344,10 @@ describe('wireless-site-planning output layers', () => {
         expect(layers.recommendedPoles.features[0].properties).toHaveProperty('score');
 
         expect(layers.sectorCoverage.features.length).toBeGreaterThan(0);
-        expect(layers.sectorCoverage.features[0].properties).toHaveProperty('azimuth');
-        expect(layers.sectorCoverage.features[0].properties).toHaveProperty('sector_width');
+        expect(layers.sectorCoverage.features.every((f) => f.geometry.type === 'LineString')).toBe(true);
+        expect(layers.sectorCoverage.features.every((f) => f.properties.coverage_shape === 'radiation_pattern')).toBe(true);
+        expect(layers.coverageHeatmap.features.length).toBeGreaterThan(0);
+        expect(layers.coverageHeatmap.features[0].properties.signal).toBeGreaterThan(0);
 
         expect(layers.coveredClients.features.length).toBe(1);
         expect(layers.coveredClients.features[0].properties).toHaveProperty('assigned_pole_id');
