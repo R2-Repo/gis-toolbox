@@ -4813,20 +4813,31 @@ export function setupLogsPanel() {
             portal.style.top = top + 'px';
         }
 
+        function hideImmediate() {
+            clearTimeout(hideTimeout);
+            portal.classList.remove('visible');
+            activeBtn = null;
+        }
+
         function hide() {
-            hideTimeout = setTimeout(() => {
-                portal.classList.remove('visible');
-                activeBtn = null;
-            }, 100);
+            hideTimeout = setTimeout(hideImmediate, 100);
         }
 
         document.addEventListener('pointerenter', (e) => {
             const btn = closestFromEvent(e, '.geo-tool-btn');
-            if (btn) show(btn);
+            if (btn) {
+                show(btn);
+            } else if (activeBtn) {
+                hideImmediate();
+            }
         }, true);
         document.addEventListener('pointerleave', (e) => {
             const btn = closestFromEvent(e, '.geo-tool-btn');
             if (btn && btn === activeBtn) hide();
+        }, true);
+        document.addEventListener('pointerdown', (e) => {
+            const btn = closestFromEvent(e, '.geo-tool-btn');
+            if (btn && btn === activeBtn) hideImmediate();
         }, true);
     })();
 }

@@ -2012,6 +2012,46 @@ class MapManager {
         });
     }
 
+    /**
+     * Repeated map clicks until Esc or banner Cancel. onPoint(coord) runs after each click.
+     * @param {string} prompt
+     * @param {(coord: number[]) => void | Promise<void>} onPoint
+     * @returns {Promise<void>}
+     */
+    startContinuousPointPick(prompt = 'Click the map to add points (Esc or Cancel when done)', onPoint) {
+        return new Promise((resolve) => {
+            this._cancelInteraction();
+            const canvas = this.map.getCanvas();
+            canvas.style.cursor = 'crosshair';
+
+            const finish = () => {
+                cleanup();
+                resolve();
+            };
+
+            const banner = this._showInteractionBanner(prompt, finish);
+
+            const onClick = (e) => {
+                markMapInteractionHandled(e);
+                const coord = [e.lngLat.lng, e.lngLat.lat];
+                Promise.resolve(onPoint?.(coord)).catch(() => finish());
+            };
+            const onKeyDown = (e) => { if (e.key === 'Escape') finish(); };
+
+            const cleanup = () => {
+                canvas.style.cursor = '';
+                this.map.off('click', onClick);
+                document.removeEventListener('keydown', onKeyDown);
+                if (banner) banner.remove();
+                this._interactionCleanup = null;
+            };
+
+            this._interactionCleanup = cleanup;
+            this.map.on('click', onClick);
+            document.addEventListener('keydown', onKeyDown);
+        });
+    }
+
     startTwoPointPick(prompt1 = 'Click the first point', prompt2 = 'Click the second point') {
         return new Promise((resolve) => {
             this._cancelInteraction();
@@ -2804,6 +2844,106 @@ class MapManager {
         for (const entry of entries) {
             this._removeTempFeature(entry);
         }
+    }
+
+    /**
+     * Wireless site planning preview: blue square clients, red poles, light red unused poles, green sectors.
+     * Features should set properties._preview to draw_client | covered | uncovered | draw_pole | pole | unused_pole | sector | assignment.
+     */
+    showWirelessPlanningPreview(geojson, duration = 0) {
+        const srcId = this._nextId('temp');
+        this.map.addSource(srcId, { type: 'geojson', data: geojson });
+        const layerIds = [];
+
+        const sectorFillId = srcId + '-sector-fill';
+        this.map.addLayer({
+            id: sectorFillId,
+            type: 'fill',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'sector']
+            ],
+            paint: { 'fill-color': '#22c55e', 'fill-opacity': 0.25 }
+        });
+        layerIds.push(sectorFillId);
+
+        const sectorOutlineId = srcId + '-sector-outline';
+        this.map.addLayer({
+            id: sectorOutlineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'sector']
+            ],
+            paint: { 'line-color': '#16a34a', 'line-width': 2 }
+        });
+        layerIds.push(sectorOutlineId);
+
+        const assignmentLineId = srcId + '-assignment-line';
+        this.map.addLayer({
+            id: assignmentLineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['LineString', 'MultiLineString']),
+                ['==', ['get', '_preview'], 'assignment']
+            ],
+            paint: { 'line-color': '#94a3b8', 'line-width': 2, 'line-dasharray': [2, 2] }
+        });
+        layerIds.push(assignmentLineId);
+
+        const clientSquareId = srcId + '-client-square';
+        const clientIcon = this._ensureSymbolImage('square', '#ffffff', '#2563eb', 8, 1);
+        this.map.addLayer({
+            id: clientSquareId,
+            type: 'symbol',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Point', 'MultiPoint']),
+                ['in', ['get', '_preview'], ['literal', ['draw_client', 'covered', 'uncovered']]]
+            ],
+            layout: {
+                'icon-image': clientIcon,
+                'icon-size': 1,
+                'icon-allow-overlap': true,
+                'icon-anchor': 'center'
+            }
+        });
+        layerIds.push(clientSquareId);
+
+        const poleCircleId = srcId + '-pole-circle';
+        this.map.addLayer({
+            id: poleCircleId,
+            type: 'circle',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Point', 'MultiPoint']),
+                ['in', ['get', '_preview'], ['literal', ['draw_pole', 'pole', 'unused_pole']]]
+            ],
+            paint: {
+                'circle-radius': [
+                    'match', ['get', '_preview'],
+                    'unused_pole', 7,
+                    9
+                ],
+                'circle-color': [
+                    'match', ['get', '_preview'],
+                    'unused_pole', '#fca5a5',
+                    '#ef4444'
+                ],
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2
+            }
+        });
+        layerIds.push(poleCircleId);
+
+        const entry = { srcId, layerIds };
+        this._tempLayers.push(entry);
+
+        if (duration > 0) setTimeout(() => this._removeTempFeature(entry), duration);
+        return entry;
     }
 
     /**

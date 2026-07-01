@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildPreviewGeojson,
+    buildWirelessLocationsCsvTemplate,
     buildWirelessPlanningOutputLayers,
     calculateBearing,
     calculateDistance,
@@ -7,11 +9,15 @@ import {
     createSectorPolygon,
     findBestSectorForPole,
     findBestTwoSectorsForPole,
+    fitSectorWidthForClients,
     isPointInsideSector,
     normalizeClientPoints,
     normalizePolePoints,
     runGreedyPoleSectorOptimization,
-    validateWirelessPlanningInputs
+    splitFeaturesByLocationType,
+    validateWirelessPlanningInputs,
+    WIRELESS_LOCATIONS_CSV_COLUMNS,
+    WIRELESS_LOCATIONS_CSV_SAMPLE_ROWS
 } from '../js/widgets/wireless-site-planning/engine.js';
 
 function pointFeature(lon, lat, props = {}) {
@@ -123,6 +129,47 @@ describe('wireless-site-planning sector optimization', () => {
         expect(result.coveredClients.length).toBe(2);
     });
 
+    it('auto-fit picks independent sector widths per antenna', () => {
+        const pole = { id: 'p1', lat: 40.0, lon: -111.0 };
+        const eastClients = [
+            { id: 'e1', lat: 40.0, lon: -110.995 },
+            { id: 'e2', lat: 40.002, lon: -110.994 },
+            { id: 'e3', lat: 39.998, lon: -110.993 }
+        ];
+        const westClients = [
+            { id: 'w1', lat: 40.0, lon: -111.005 },
+            { id: 'w2', lat: 40.0, lon: -111.006 }
+        ];
+        const clients = [...eastClients, ...westClients];
+
+        const result = findBestTwoSectorsForPole(pole, clients, {
+            defaultRange: 2,
+            defaultSectorWidth: 90,
+            sectorWidthMode: 'auto_fit',
+            units: 'miles',
+            maxAntennasPerPole: 2
+        });
+
+        expect(result).not.toBeNull();
+        expect(result.sectors).toHaveLength(2);
+        expect(result.sectors[0].sectorWidth).toBeLessThan(360);
+        expect(result.sectors[1].sectorWidth).toBeLessThan(360);
+        expect(result.sectors[0].sectorWidth).not.toBe(result.sectors[1].sectorWidth);
+        expect(result.coveredClients.length).toBe(5);
+    });
+
+    it('auto-fit uses angular spread for sector width', () => {
+        const pole = { id: 'p1', lat: 40.0, lon: -111.0 };
+        const clients = [
+            { id: 'c1', lat: 40.0, lon: -110.995 },
+            { id: 'c2', lat: 40.0, lon: -110.994 }
+        ];
+
+        const width = fitSectorWidthForClients(pole, clients, 90);
+        expect(width).toBeLessThanOrEqual(90);
+        expect(width).toBeGreaterThanOrEqual(30);
+    });
+
     it('greedy optimizer recommends a pole that covers the most clients', () => {
         const pole1 = { id: 'p1', name: 'Pole 1', lat: 40.0, lon: -111.0 };
         const pole2 = { id: 'p2', name: 'Pole 2', lat: 40.05, lon: -111.05 };
@@ -163,6 +210,31 @@ describe('wireless-site-planning sector optimization', () => {
         expect(result.uncoveredClients.length).toBe(1);
         expect(result.uncoveredClients[0].id).toBe('far');
         expect(result.uncoveredClients[0].reason).toBe('out_of_range');
+    });
+
+    it('does not select the same pole more than once', () => {
+        const pole = { id: 'p1', lat: 40.0, lon: -111.0 };
+        const clients = [
+            { id: 'c1', lat: 40.0, lon: -110.99 },
+            { id: 'c2', lat: 40.01, lon: -111.0 },
+            { id: 'c3', lat: 40.0, lon: -110.98 },
+            { id: 'c4', lat: 40.005, lon: -111.01 }
+        ];
+
+        const result = runGreedyPoleSectorOptimization(clients, [pole], {
+            defaultRange: 2,
+            defaultSectorWidth: 90,
+            sectorWidthMode: 'fixed',
+            units: 'miles',
+            maxAntennasPerPole: 2,
+            optimizationGoal: 'cover_most'
+        });
+
+        const poleIds = result.selectedPoles.map((entry) => entry.pole.id);
+        expect(new Set(poleIds).size).toBe(poleIds.length);
+        expect(result.selectedPoles.length).toBe(1);
+        expect(result.selectedPoles[0].antennaCount).toBeLessThanOrEqual(2);
+        expect(result.summary.recommendedAntennas).toBeLessThanOrEqual(2);
     });
 });
 
@@ -205,5 +277,94 @@ describe('wireless-site-planning output layers', () => {
         expect(defaults.antenna_1_enabled).toBe(true);
         expect(defaults.antenna_1_label).toBe('Sector A');
         expect(defaults.antenna_2_enabled).toBe(false);
+    });
+
+    it('marks unused poles in preview geojson', () => {
+        const poleUsed = { id: 'p1', lat: 40.0, lon: -111.0 };
+        const poleUnused = { id: 'p2', lat: 40.05, lon: -111.05 };
+        const result = runGreedyPoleSectorOptimization(
+            [{ id: 'c1', lat: 40.0, lon: -110.99 }],
+            [poleUsed, poleUnused],
+            {
+                defaultRange: 2,
+                defaultSectorWidth: 90,
+                sectorWidthMode: 'fixed',
+                units: 'miles',
+                maxAntennasPerPole: 1,
+                optimizationGoal: 'balanced'
+            }
+        );
+
+        const preview = buildPreviewGeojson(result, { allPoles: [poleUsed, poleUnused] });
+        const previews = preview.features.map((f) => f.properties._preview);
+        expect(previews).toContain('pole');
+        expect(previews).toContain('unused_pole');
+        expect(previews.filter((p) => p === 'unused_pole')).toHaveLength(1);
+    });
+});
+
+describe('wireless-site-planning locations CSV template', () => {
+    it('includes required import columns', () => {
+        expect(WIRELESS_LOCATIONS_CSV_COLUMNS).toEqual([
+            'location_type',
+            'name',
+            'latitude',
+            'longitude'
+        ]);
+    });
+
+    it('builds a CSV template with mixed client and pole sample rows', () => {
+        const csv = buildWirelessLocationsCsvTemplate();
+        expect(csv).toContain('location_type,name,latitude,longitude');
+        expect(csv).toContain('client,I-15 @ 600 South');
+        expect(csv).toContain('pole,Pole A - 600 South');
+        expect(csv).toContain('40.7521');
+        expect(csv).toContain('-111.8982');
+        expect(csv.split('\n').filter(Boolean).length).toBe(WIRELESS_LOCATIONS_CSV_SAMPLE_ROWS.length + 1);
+    });
+});
+
+describe('wireless-site-planning location_type split', () => {
+    it('splits features by location_type', () => {
+        const features = [
+            pointFeature(-111.8982, 40.7521, { location_type: 'client', name: 'Client A' }),
+            pointFeature(-111.8970, 40.7535, { location_type: 'pole', name: 'Pole A' }),
+            pointFeature(-111.89, 40.76, { location_type: 'CLIENT', name: 'Client B' }),
+            pointFeature(-111.88, 40.77, { location_type: 'POLE', name: 'Pole B' })
+        ];
+
+        const split = splitFeaturesByLocationType(features);
+        expect(split.clients).toHaveLength(2);
+        expect(split.poles).toHaveLength(2);
+        expect(split.invalid).toHaveLength(0);
+    });
+
+    it('accepts type and point_type aliases', () => {
+        const split = splitFeaturesByLocationType([
+            pointFeature(-111, 40, { type: 'client' }),
+            pointFeature(-111.1, 40.1, { point_type: 'pole' })
+        ]);
+        expect(split.clients).toHaveLength(1);
+        expect(split.poles).toHaveLength(1);
+    });
+
+    it('skips rows with missing or unknown location_type', () => {
+        const split = splitFeaturesByLocationType([
+            pointFeature(-111, 40, { location_type: 'client' }),
+            pointFeature(-111.1, 40.1, {}),
+            pointFeature(-111.2, 40.2, { location_type: 'tower' })
+        ]);
+        expect(split.clients).toHaveLength(1);
+        expect(split.poles).toHaveLength(0);
+        expect(split.invalid).toHaveLength(2);
+        expect(split.unknownTypeCount).toBe(1);
+    });
+
+    it('defaults client coverage fields during normalization', () => {
+        const clients = normalizeClientPoints([
+            pointFeature(-111, 40, { name: 'Client 1' })
+        ]);
+        expect(clients.valid[0].coverage_status).toBe('unknown');
+        expect(clients.valid[0].assigned_pole_id).toBeNull();
     });
 });

@@ -65,6 +65,7 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         getImportFenceEsriEnvelope: mapApi.getImportFenceEsriEnvelope?.bind(mapApi),
         showTempFeature: mapApi.showTempFeature?.bind(mapApi),
         showRouteMilepostPreview: mapApi.showRouteMilepostPreview?.bind(mapApi),
+        showWirelessPlanningPreview: mapApi.showWirelessPlanningPreview?.bind(mapApi),
         showProjectStationingPreview: mapApi.showProjectStationingPreview?.bind(mapApi),
         removeTempFeature: mapApi.removeTempFeature?.bind(mapApi),
         clearTempFeatures: mapApi.clearTempFeatures?.bind(mapApi),
@@ -212,6 +213,12 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
     mapApi.showRouteMilepostPreview = function showRouteMilepostPreview(geojson, duration = 0) {
         if (!coordinator.isActive) return originals.showRouteMilepostPreview?.(geojson, duration);
         coordinator.broadcastMapCmd('showRouteMilepostPreview', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showWirelessPlanningPreview = function showWirelessPlanningPreview(geojson, duration = 0) {
+        if (!coordinator.isActive) return originals.showWirelessPlanningPreview?.(geojson, duration);
+        coordinator.broadcastMapCmd('showWirelessPlanningPreview', { geojson: cloneJson(geojson), duration });
         return { dualScreenRemote: true };
     };
 

@@ -1,64 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WidgetPanelShell } from './shared/WidgetPanelShell.jsx';
 import { PoleSectorOptimizerPanel } from './wireless-site-planning/PoleSectorOptimizerPanel.jsx';
 
-const ENABLED_TOOLS = [
+const TOOLS = [
     {
         id: 'pole-sector-optimizer',
         label: 'Pole / Sector Coverage Optimizer',
-        description: 'Find the best pole locations and antenna sectors to cover client locations.'
+        tip: 'Find the best pole locations and antenna sectors to cover client locations.'
     }
-];
-
-const PLANNED_TOOLS = [
-    'Line of Sight Checker',
-    'Fresnel Zone Checker',
-    'Coverage Overlap Analyzer',
-    'Capacity Estimator',
-    'Backhaul Path Planner',
-    'Outage / Redundancy Planner'
 ];
 
 function LauncherView({ onSelectTool, onCancel }) {
     return (
         <WidgetPanelShell onCancel={onCancel} showRun={false}>
-            <div style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Wireless Site Planning</div>
-                <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>
-                    Choose a wireless planning tool to get started.
-                </p>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                {ENABLED_TOOLS.map((tool) => (
-                    <button
-                        key={tool.id}
-                        type="button"
-                        className="btn btn-sm btn-secondary"
-                        style={{ textAlign: 'left', padding: '10px 12px', height: 'auto' }}
-                        onClick={() => onSelectTool(tool.id)}
-                    >
-                        <div style={{ fontWeight: 600 }}>{tool.label}</div>
-                        <div className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 4 }}>{tool.description}</div>
-                    </button>
-                ))}
-            </div>
-
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>Coming later</div>
-                {PLANNED_TOOLS.map((label) => (
-                    <div
-                        key={label}
-                        style={{
-                            padding: '8px 10px',
-                            marginBottom: 4,
-                            borderRadius: 4,
-                            background: 'var(--bg-surface)',
-                            opacity: 0.6
-                        }}
-                    >
-                        {label} — coming later
-                    </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {TOOLS.map((tool) => (
+                    <span key={tool.id} className="geo-tool-btn">
+                        <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => onSelectTool(tool.id)}
+                        >
+                            {tool.label}
+                        </button>
+                        <span className="geo-tip">{tool.tip}</span>
+                    </span>
                 ))}
             </div>
         </WidgetPanelShell>
@@ -68,37 +34,60 @@ function LauncherView({ onSelectTool, onCancel }) {
 export function WirelessSitePlanningDialog({
     layers = [],
     unitOptions = [],
+    closeWidget,
     onCancel,
-    onValidateClients,
-    onValidatePoles,
-    onDrawClientPoint,
-    onDrawPolePoint,
+    onValidateLocations,
+    onStartDrawClientPoints,
+    onStartDrawPolePoints,
+    onStopPointDraw,
+    onDownloadLocationsTemplate,
+    onUpdateDrawPreview,
     onRun,
     onCreateOutputs
 }) {
     const [activeTool, setActiveTool] = useState(null);
+    const activeToolRef = useRef(null);
+    const containerRef = useRef(null);
+    activeToolRef.current = activeTool;
 
-    if (activeTool === 'pole-sector-optimizer') {
-        return (
-            <PoleSectorOptimizerPanel
-                layers={layers}
-                unitOptions={unitOptions}
-                onBack={() => setActiveTool(null)}
-                onCancel={onCancel}
-                onValidateClients={onValidateClients}
-                onValidatePoles={onValidatePoles}
-                onDrawClientPoint={onDrawClientPoint}
-                onDrawPolePoint={onDrawPolePoint}
-                onRun={onRun}
-                onCreateOutputs={onCreateOutputs}
-            />
-        );
-    }
+    useEffect(() => {
+        const overlay = containerRef.current?.closest('.modal-overlay');
+        if (!overlay) return undefined;
+
+        overlay._interceptClose = () => {
+            if (activeToolRef.current) {
+                setActiveTool(null);
+                return true;
+            }
+            return false;
+        };
+
+        return () => {
+            delete overlay._interceptClose;
+        };
+    }, []);
 
     return (
-        <LauncherView
-            onSelectTool={setActiveTool}
-            onCancel={onCancel}
-        />
+        <div ref={containerRef}>
+            {activeTool === 'pole-sector-optimizer' ? (
+                <PoleSectorOptimizerPanel
+                    layers={layers}
+                    unitOptions={unitOptions}
+                    onValidateLocations={onValidateLocations}
+                    onStartDrawClientPoints={onStartDrawClientPoints}
+                    onStartDrawPolePoints={onStartDrawPolePoints}
+                    onStopPointDraw={onStopPointDraw}
+                    onDownloadLocationsTemplate={onDownloadLocationsTemplate}
+                    onUpdateDrawPreview={onUpdateDrawPreview}
+                    onRun={onRun}
+                    onCreateOutputs={onCreateOutputs}
+                />
+            ) : (
+                <LauncherView
+                    onSelectTool={setActiveTool}
+                    onCancel={() => closeWidget?.() ?? onCancel?.()}
+                />
+            )}
+        </div>
     );
 }

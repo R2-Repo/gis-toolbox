@@ -1,13 +1,16 @@
+import { downloadBlob } from '../../export/exporter.js';
 import { openReactIsland } from '../../ui/open-react-island.js';
 import { getSpatialLayerOptions } from '../widget-context.js';
 import {
     UNIT_LABELS,
+    buildWirelessLocationsCsvTemplate,
     buildPreviewGeojson,
     buildWirelessPlanningOutputLayers,
     createDefaultPoleSectorAttributes,
     normalizeClientPoints,
     normalizePolePoints,
     runGreedyPoleSectorOptimization,
+    splitFeaturesByLocationType,
     validateWirelessPlanningInputs
 } from './engine.js';
 
@@ -16,31 +19,45 @@ function getLayerFeatures(ctx, layerId) {
     return layer?.geojson?.features || [];
 }
 
-function resolveFeatures(sourceMode, layerId, drawnFeatures, ctx) {
-    if (sourceMode === 'draw') return drawnFeatures || [];
-    return getLayerFeatures(ctx, layerId);
-}
-
-function buildValidationStats(features, type, settings = {}) {
-    if (type === 'clients') {
-        const norm = normalizeClientPoints(features);
+function resolveLocationFeatures(config, ctx) {
+    if (config.sourceMode === 'draw') {
         return {
-            total: norm.total,
-            valid: norm.valid.length,
-            invalid: norm.invalid.length
+            clients: config.drawnClients || [],
+            poles: config.drawnPoles || [],
+            splitInvalid: []
         };
     }
-    const norm = normalizePolePoints(features, {
+
+    const split = splitFeaturesByLocationType(getLayerFeatures(ctx, config.locationsLayerId));
+    return {
+        clients: split.clients,
+        poles: split.poles,
+        splitInvalid: split.invalid
+    };
+}
+
+function buildLocationValidationStats({ clients, poles, splitInvalid = [] }, settings = {}) {
+    const clientNorm = normalizeClientPoints(clients);
+    const poleNorm = normalizePolePoints(poles, {
         defaultRange: settings.defaultRange,
         defaultWidth: settings.defaultSectorWidth,
         units: settings.units
     });
+
     return {
-        total: norm.total,
-        valid: norm.valid.length,
-        invalid: norm.invalid.length,
-        polesWithExistingAttrs: norm.withExistingAttrs,
-        polesUsingDefaults: norm.usingDefaults
+        clientStats: {
+            total: clientNorm.total,
+            valid: clientNorm.valid.length,
+            invalid: clientNorm.invalid.length
+        },
+        poleStats: {
+            total: poleNorm.total,
+            valid: poleNorm.valid.length,
+            invalid: poleNorm.invalid.length,
+            polesWithExistingAttrs: poleNorm.withExistingAttrs,
+            polesUsingDefaults: poleNorm.usingDefaults
+        },
+        splitInvalidCount: splitInvalid.length
     };
 }
 
@@ -61,19 +78,88 @@ function addDerivedLayer(ctx, name, fc, options = {}) {
     return dataset;
 }
 
+function buildDrawPreviewGeojson({ drawnClients = [], drawnPoles = [] } = {}) {
+    const features = [
+        ...drawnClients.map((feature) => ({
+            ...feature,
+            properties: { ...(feature.properties || {}), _preview: 'draw_client' }
+        })),
+        ...drawnPoles.map((feature) => ({
+            ...feature,
+            properties: { ...(feature.properties || {}), _preview: 'draw_pole' }
+        }))
+    ];
+    return { type: 'FeatureCollection', features };
+}
+
+function clearPreviewEntries(ctx, state) {
+    if (state.drawPreviewEntry) {
+        ctx.mapService.removeTempFeature?.(state.drawPreviewEntry);
+        state.drawPreviewEntry = null;
+    }
+    if (state.optimizationPreviewEntry) {
+        ctx.mapService.removeTempFeature?.(state.optimizationPreviewEntry);
+        state.optimizationPreviewEntry = null;
+    }
+}
+
+function showWirelessPreview(ctx, geojson) {
+    return ctx.mapService.showWirelessPlanningPreview?.(geojson, 0)
+        ?? ctx.mapService.showTempFeature?.(geojson, 0)
+        ?? null;
+}
+
+function showDrawPreview(ctx, state, geojson) {
+    if (state.drawPreviewEntry) {
+        ctx.mapService.removeTempFeature?.(state.drawPreviewEntry);
+        state.drawPreviewEntry = null;
+    }
+    if (!geojson?.features?.length) return;
+    state.drawPreviewEntry = showWirelessPreview(ctx, geojson);
+}
+
+function showOptimizationPreview(ctx, state, geojson) {
+    if (state.drawPreviewEntry) {
+        ctx.mapService.removeTempFeature?.(state.drawPreviewEntry);
+        state.drawPreviewEntry = null;
+    }
+    if (state.optimizationPreviewEntry) {
+        ctx.mapService.removeTempFeature?.(state.optimizationPreviewEntry);
+        state.optimizationPreviewEntry = null;
+    }
+    state.optimizationPreviewEntry = showWirelessPreview(ctx, geojson);
+}
+
+function buildDrawnClientFeature(coord, seq) {
+    return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: coord },
+        properties: {
+            id: `drawn-client-${seq}`,
+            name: `Client ${seq}`
+        }
+    };
+}
+
+function buildDrawnPoleFeature(coord, seq, settings = {}) {
+    const defaults = createDefaultPoleSectorAttributes(
+        parseFloat(settings.defaultRange) || 1,
+        parseFloat(settings.defaultSectorWidth) || 90,
+        settings.units || 'miles'
+    );
+    return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: coord },
+        properties: {
+            id: `drawn-pole-${seq}`,
+            name: `Pole ${seq}`,
+            ...defaults
+        }
+    };
+}
+
 function buildRunPayload(ctx, config) {
-    const clientFeatures = resolveFeatures(
-        config.clientSourceMode,
-        config.clientLayerId,
-        config.drawnClients,
-        ctx
-    );
-    const poleFeatures = resolveFeatures(
-        config.poleSourceMode,
-        config.poleLayerId,
-        config.drawnPoles,
-        ctx
-    );
+    const { clients: clientFeatures, poles: poleFeatures } = resolveLocationFeatures(config, ctx);
 
     const validation = validateWirelessPlanningInputs({
         clients: clientFeatures,
@@ -93,11 +179,13 @@ function buildRunPayload(ctx, config) {
 }
 
 export async function openWirelessSitePlanning(ctx) {
-    let previewHandle = null;
+    const previewState = {
+        drawPreviewEntry: null,
+        optimizationPreviewEntry: null
+    };
 
     const clearPreview = () => {
-        ctx.mapService.showTempFeature?.(null, 0);
-        previewHandle = null;
+        clearPreviewEntries(ctx, previewState);
     };
 
     await openReactIsland({
@@ -106,6 +194,7 @@ export async function openWirelessSitePlanning(ctx) {
         mountPath: '../../../react/widgets/mountWirelessSitePlanningDialog.jsx',
         mountExport: 'mountWirelessSitePlanningDialog',
         getProps: (close) => ({
+            closeWidget: close,
             layers: getSpatialLayerOptions(ctx, { includeFields: true, requirePoints: true }),
             unitOptions: UNIT_LABELS.map((entry) => ({
                 value: entry.value,
@@ -116,48 +205,46 @@ export async function openWirelessSitePlanning(ctx) {
                 ctx.mapService.cancelInteraction?.();
                 close();
             },
-            onValidateClients: async ({ sourceMode, layerId, drawnFeatures }) => {
-                const features = resolveFeatures(sourceMode, layerId, drawnFeatures, ctx);
-                return buildValidationStats(features, 'clients');
-            },
-            onValidatePoles: async ({ sourceMode, layerId, drawnFeatures, settings }) => {
-                const features = resolveFeatures(sourceMode, layerId, drawnFeatures, ctx);
-                return buildValidationStats(features, 'poles', settings);
-            },
-            onDrawClientPoint: async () => {
-                ctx.mapService.cancelInteraction?.();
-                const coord = await ctx.mapService.startPointPick('Click the map to add a client location');
-                if (!coord) return null;
-                const index = Date.now();
-                return {
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: coord },
-                    properties: {
-                        id: `drawn-client-${index}`,
-                        name: `Client ${index}`,
-                        coverage_status: 'unknown'
-                    }
-                };
-            },
-            onDrawPolePoint: async ({ settings = {} } = {}) => {
-                ctx.mapService.cancelInteraction?.();
-                const coord = await ctx.mapService.startPointPick('Click the map to add a pole location');
-                if (!coord) return null;
-                const index = Date.now();
-                const defaults = createDefaultPoleSectorAttributes(
-                    parseFloat(settings.defaultRange) || 1,
-                    parseFloat(settings.defaultSectorWidth) || 90,
-                    settings.units || 'miles'
+            onValidateLocations: async ({ sourceMode, locationsLayerId, drawnClients, drawnPoles, settings }) => {
+                const resolved = resolveLocationFeatures(
+                    { sourceMode, locationsLayerId, drawnClients, drawnPoles },
+                    ctx
                 );
-                return {
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: coord },
-                    properties: {
-                        id: `drawn-pole-${index}`,
-                        name: `Pole ${index}`,
-                        ...defaults
+                return buildLocationValidationStats(resolved, settings);
+            },
+            onUpdateDrawPreview: ({ drawnClients = [], drawnPoles = [] } = {}) => {
+                const geojson = buildDrawPreviewGeojson({ drawnClients, drawnPoles });
+                showDrawPreview(ctx, previewState, geojson);
+            },
+            onDownloadLocationsTemplate: () => {
+                const csv = buildWirelessLocationsCsvTemplate();
+                downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'wireless_locations_template.csv');
+                ctx.showToast?.('Downloaded locations CSV template', 'success');
+            },
+            onStopPointDraw: () => {
+                ctx.mapService.cancelInteraction?.();
+            },
+            onStartDrawClientPoints: async ({ onPoint } = {}) => {
+                ctx.mapService.cancelInteraction?.();
+                let seq = 0;
+                await ctx.mapService.startContinuousPointPick?.(
+                    'Click the map to add client locations (Esc or Cancel when done)',
+                    (coord) => {
+                        seq += 1;
+                        onPoint?.(buildDrawnClientFeature(coord, seq));
                     }
-                };
+                );
+            },
+            onStartDrawPolePoints: async ({ onPoint, settings = {} } = {}) => {
+                ctx.mapService.cancelInteraction?.();
+                let seq = 0;
+                await ctx.mapService.startContinuousPointPick?.(
+                    'Click the map to add pole locations (Esc or Cancel when done)',
+                    (coord) => {
+                        seq += 1;
+                        onPoint?.(buildDrawnPoleFeature(coord, seq, settings));
+                    }
+                );
             },
             onRun: async (config) => {
                 const { clients, poles, validation } = buildRunPayload(ctx, config);
@@ -174,12 +261,11 @@ export async function openWirelessSitePlanning(ctx) {
 
                 const previewGeojson = buildPreviewGeojson(result, {
                     units: settings.units,
-                    createAssignmentLines: settings.createAssignmentLines
+                    createAssignmentLines: settings.createAssignmentLines,
+                    allPoles: poles
                 });
 
-                clearPreview();
-                ctx.mapService.showTempFeature?.(previewGeojson, 0);
-                previewHandle = { clear: clearPreview };
+                showOptimizationPreview(ctx, previewState, previewGeojson);
 
                 ctx.showToast?.(
                     `Covered ${result.summary.coveredClients} of ${result.summary.totalClients} locations (${result.summary.coveragePercent}%)`,
@@ -201,10 +287,10 @@ export async function openWirelessSitePlanning(ctx) {
 
                 let created = 0;
                 const layerDefs = [
-                    { name: 'Wireless Recommended Poles', fc: layers.recommendedPoles, style: { mode: 'simple', fillColor: '#f97316', strokeColor: '#f97316' } },
-                    { name: 'Wireless Sector Coverage', fc: layers.sectorCoverage, style: { mode: 'simple', fillColor: '#3b82f6', strokeColor: '#2563eb', fillOpacity: 0.25 } },
-                    { name: 'Wireless Covered Clients', fc: layers.coveredClients, style: { mode: 'simple', fillColor: '#22c55e', strokeColor: '#16a34a' } },
-                    { name: 'Wireless Uncovered Clients', fc: layers.uncoveredClients, style: { mode: 'simple', fillColor: '#ef4444', strokeColor: '#dc2626' } }
+                    { name: 'Wireless Recommended Poles', fc: layers.recommendedPoles, style: { mode: 'simple', fillColor: '#ef4444', strokeColor: '#dc2626' } },
+                    { name: 'Wireless Sector Coverage', fc: layers.sectorCoverage, style: { mode: 'simple', fillColor: '#22c55e', strokeColor: '#16a34a', fillOpacity: 0.25 } },
+                    { name: 'Wireless Covered Clients', fc: layers.coveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } },
+                    { name: 'Wireless Uncovered Clients', fc: layers.uncoveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } }
                 ];
 
                 if (options.createAssignmentLines && layers.clientAssignments.features.length) {

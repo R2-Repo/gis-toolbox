@@ -198,6 +198,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         startPointPick(prompt) {
             return mapAdapter.startPointPick(prompt);
         },
+        startContinuousPointPick(prompt, onPoint) {
+            return mapAdapter.startContinuousPointPick?.(prompt, onPoint);
+        },
         startTwoPointPick(prompt1, prompt2) {
             return mapAdapter.startTwoPointPick(prompt1, prompt2);
         },
@@ -245,6 +248,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         showRouteMilepostPreview(geojson, duration) {
             return mapAdapter.showRouteMilepostPreview?.(geojson, duration);
+        },
+        showWirelessPlanningPreview(geojson, duration) {
+            return mapAdapter.showWirelessPlanningPreview?.(geojson, duration);
         },
         showProjectStationingPreview(geojson, duration) {
             return mapAdapter.showProjectStationingPreview?.(geojson, duration);

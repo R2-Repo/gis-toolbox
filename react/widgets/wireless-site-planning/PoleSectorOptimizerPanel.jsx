@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayerSelect } from '../shared/LayerSelect.jsx';
 import { WidgetPanelShell } from '../shared/WidgetPanelShell.jsx';
-import { WidgetStepWizard } from '../shared/WidgetStepWizard.jsx';
 
 const WIZARD_STEPS = [
-    'Locations that need coverage',
-    'Possible pole locations',
+    'Locations',
     'Planning settings',
     'Review & run',
     'Results'
@@ -25,7 +23,7 @@ const SECTOR_WIDTH_MODE_OPTIONS = [
 
 const SECTOR_WIDTH_CHOICES = [30, 45, 60, 90, 120, 180, 360];
 
-function SourceModeToggle({ mode, onChange, drawLabel }) {
+function SourceModeToggle({ mode, onChange }) {
     return (
         <div className="form-group">
             <label>Data source</label>
@@ -33,7 +31,7 @@ function SourceModeToggle({ mode, onChange, drawLabel }) {
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                     <input
                         type="radio"
-                        name={`source-${drawLabel}`}
+                        name="source-locations"
                         checked={mode === 'layer'}
                         onChange={() => onChange('layer')}
                     />
@@ -42,7 +40,7 @@ function SourceModeToggle({ mode, onChange, drawLabel }) {
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                     <input
                         type="radio"
-                        name={`source-${drawLabel}`}
+                        name="source-locations"
                         checked={mode === 'draw'}
                         onChange={() => onChange('draw')}
                     />
@@ -73,23 +71,51 @@ function StatsBlock({ title, stats }) {
     );
 }
 
+function DrawPointsBlock({ label, count, drawing, onStart, onStop, disabled }) {
+    return (
+        <div className="form-group" style={{ marginBottom: 8 }}>
+            <label>{label}</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {drawing ? (
+                    <button type="button" className="btn btn-sm btn-primary" onClick={onStop}>
+                        Stop adding
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        className="btn btn-sm btn-secondary"
+                        onClick={onStart}
+                        disabled={disabled}
+                    >
+                        Add points on map
+                    </button>
+                )}
+            </div>
+            <div className="text-xs" style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                {count} point{count === 1 ? '' : 's'}
+                {drawing ? ' — click the map repeatedly; Esc or Cancel when done' : ''}
+            </div>
+        </div>
+    );
+}
+
 export function PoleSectorOptimizerPanel({
     layers = [],
     unitOptions = [],
-    onBack,
-    onCancel,
-    onValidateClients,
-    onValidatePoles,
-    onDrawClientPoint,
-    onDrawPolePoint,
+    onValidateLocations,
+    onStartDrawClientPoints,
+    onStartDrawPolePoints,
+    onStopPointDraw,
+    onDownloadLocationsTemplate,
+    onUpdateDrawPreview,
     onRun,
     onCreateOutputs
 }) {
     const [step, setStep] = useState(1);
-    const [clientSourceMode, setClientSourceMode] = useState('layer');
-    const [poleSourceMode, setPoleSourceMode] = useState('layer');
-    const [clientLayerId, setClientLayerId] = useState('');
-    const [poleLayerId, setPoleLayerId] = useState('');
+    const [sourceMode, setSourceMode] = useState('layer');
+    const [drawingMode, setDrawingMode] = useState(null);
+    const drawingModeRef = useRef(null);
+    const [locationsLayerId, setLocationsLayerId] = useState('');
     const [drawnClients, setDrawnClients] = useState([]);
     const [drawnPoles, setDrawnPoles] = useState([]);
     const [clientStats, setClientStats] = useState(null);
@@ -122,103 +148,117 @@ export function PoleSectorOptimizerPanel({
         createAssignmentLines
     }), [defaultRange, defaultSectorWidth, sectorWidthMode, maxAntennasPerPole, optimizationGoal, units, createAssignmentLines]);
 
-    const refreshClientStats = useCallback(async () => {
-        if (!onValidateClients) return;
+    const refreshLocationStats = useCallback(async () => {
+        if (!onValidateLocations) return;
         try {
-            const stats = await onValidateClients({
-                sourceMode: clientSourceMode,
-                layerId: clientLayerId,
-                drawnFeatures: drawnClients
-            });
-            setClientStats(stats);
-        } catch {
-            setClientStats(null);
-        }
-    }, [onValidateClients, clientSourceMode, clientLayerId, drawnClients]);
-
-    const refreshPoleStats = useCallback(async () => {
-        if (!onValidatePoles) return;
-        try {
-            const stats = await onValidatePoles({
-                sourceMode: poleSourceMode,
-                layerId: poleLayerId,
-                drawnFeatures: drawnPoles,
+            const result = await onValidateLocations({
+                sourceMode,
+                locationsLayerId,
+                drawnClients,
+                drawnPoles,
                 settings
             });
-            setPoleStats(stats);
+            setClientStats(result.clientStats);
+            setPoleStats(result.poleStats);
         } catch {
+            setClientStats(null);
             setPoleStats(null);
         }
-    }, [onValidatePoles, poleSourceMode, poleLayerId, drawnPoles, settings]);
+    }, [onValidateLocations, sourceMode, locationsLayerId, drawnClients, drawnPoles, settings]);
 
     useEffect(() => {
-        if (step >= 1) refreshClientStats();
-    }, [step, refreshClientStats]);
+        if (step >= 1) refreshLocationStats();
+    }, [step, refreshLocationStats]);
 
     useEffect(() => {
-        if (step >= 2) refreshPoleStats();
-    }, [step, refreshPoleStats]);
+        if (!onUpdateDrawPreview) return;
+        onUpdateDrawPreview({
+            drawnClients: sourceMode === 'draw' ? drawnClients : [],
+            drawnPoles: sourceMode === 'draw' ? drawnPoles : []
+        });
+    }, [drawnClients, drawnPoles, sourceMode, onUpdateDrawPreview]);
 
-    const canAdvanceStep1 = clientSourceMode === 'layer'
-        ? Boolean(clientLayerId)
-        : drawnClients.length > 0;
+    const canAdvanceStep1 = sourceMode === 'layer'
+        ? Boolean(locationsLayerId) && (clientStats?.valid ?? 0) > 0 && (poleStats?.valid ?? 0) > 0
+        : drawnClients.length > 0 && drawnPoles.length > 0;
 
-    const canAdvanceStep2 = poleSourceMode === 'layer'
-        ? Boolean(poleLayerId)
-        : drawnPoles.length > 0;
+    const canAdvanceStep2 = parseFloat(defaultRange) > 0 && parseFloat(defaultSectorWidth) > 0;
 
-    const canAdvanceStep3 = parseFloat(defaultRange) > 0 && parseFloat(defaultSectorWidth) > 0;
+    const stopDrawing = useCallback(() => {
+        onStopPointDraw?.();
+        drawingModeRef.current = null;
+        setDrawingMode(null);
+    }, [onStopPointDraw]);
 
-    const handleDrawClient = async () => {
-        setStatus('Click the map to add a client location…');
+    useEffect(() => () => stopDrawing(), [stopDrawing]);
+
+    useEffect(() => {
+        if (step !== 1 && drawingMode) stopDrawing();
+    }, [step, drawingMode, stopDrawing]);
+
+    const handleSourceModeChange = (mode) => {
+        if (drawingMode) stopDrawing();
+        setSourceMode(mode);
+    };
+
+    const handleStartDrawClient = async () => {
+        if (drawingModeRef.current) stopDrawing();
+        drawingModeRef.current = 'client';
+        setDrawingMode('client');
         setError('');
+        setStatus('Click the map to add client locations. Press Esc or Cancel on the map when done.');
         try {
-            const feature = await onDrawClientPoint?.();
-            if (feature) {
-                setDrawnClients((prev) => [...prev, feature]);
-                setStatus('Client point added.');
-            } else {
-                setStatus('');
-            }
+            await onStartDrawClientPoints?.({
+                onPoint: (feature) => {
+                    setDrawnClients((prev) => [...prev, feature]);
+                }
+            });
         } catch (err) {
-            setError(err.message || 'Could not add client point.');
+            setError(err.message || 'Could not add client points.');
+        } finally {
+            drawingModeRef.current = null;
+            setDrawingMode(null);
             setStatus('');
         }
     };
 
-    const handleDrawPole = async () => {
-        setStatus('Click the map to add a pole location…');
+    const handleStartDrawPole = async () => {
+        if (drawingModeRef.current) stopDrawing();
+        drawingModeRef.current = 'pole';
+        setDrawingMode('pole');
         setError('');
+        setStatus('Click the map to add pole locations. Press Esc or Cancel on the map when done.');
         try {
-            const feature = await onDrawPolePoint?.({ settings });
-            if (feature) {
-                setDrawnPoles((prev) => [...prev, feature]);
-                setStatus('Pole point added with default sector settings.');
-            } else {
-                setStatus('');
-            }
+            await onStartDrawPolePoints?.({
+                settings,
+                onPoint: (feature) => {
+                    setDrawnPoles((prev) => [...prev, feature]);
+                }
+            });
         } catch (err) {
-            setError(err.message || 'Could not add pole point.');
+            setError(err.message || 'Could not add pole points.');
+        } finally {
+            drawingModeRef.current = null;
+            setDrawingMode(null);
             setStatus('');
         }
     };
 
     const handleRun = async () => {
+        stopDrawing();
         setRunning(true);
         setError('');
         setStatus('Running optimizer…');
         try {
             const result = await onRun?.({
-                clientSourceMode,
-                clientLayerId,
+                sourceMode,
+                locationsLayerId,
                 drawnClients,
-                poleSourceMode,
-                poleLayerId,
                 drawnPoles,
                 settings
             });
             setResults(result);
-            setStep(5);
+            setStep(4);
             setStatus('Optimization complete. Review results below.');
         } catch (err) {
             setError(err.message || 'Optimization failed.');
@@ -242,42 +282,49 @@ export function PoleSectorOptimizerPanel({
         }
     };
 
-    const wizardFooter = (primaryLabel, onPrimary, primaryDisabled = false) => (
+    const handleBackFromResults = () => {
+        setResults(null);
+        setStep(2);
+        setStatus('');
+        setError('');
+    };
+
+    const wizardFooter = () => (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', width: '100%' }}>
             <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={onCancel}>Cancel</button>
-                {step > 1 && step < 5 ? (
+                {step === 4 ? (
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={handleBackFromResults}>
+                        Back
+                    </button>
+                ) : null}
+                {step > 1 && step < 4 ? (
                     <button type="button" className="btn btn-sm btn-secondary" onClick={() => setStep((s) => s - 1)}>Back</button>
                 ) : null}
-                {step === 1 ? (
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={onBack}>Tool list</button>
-                ) : null}
             </div>
-            {step < 4 ? (
+            {step < 3 ? (
                 <button
                     type="button"
                     className="btn btn-sm btn-primary"
                     disabled={
                         (step === 1 && !canAdvanceStep1)
                         || (step === 2 && !canAdvanceStep2)
-                        || (step === 3 && !canAdvanceStep3)
                     }
                     onClick={() => setStep((s) => s + 1)}
                 >
                     Next
                 </button>
             ) : null}
-            {step === 4 ? (
+            {step === 3 ? (
                 <button
                     type="button"
                     className="btn btn-sm btn-primary"
-                    disabled={running || !canAdvanceStep3}
+                    disabled={running || !canAdvanceStep2}
                     onClick={handleRun}
                 >
-                    {running ? 'Running…' : primaryLabel || 'Run optimizer'}
+                    {running ? 'Running…' : 'Run optimizer'}
                 </button>
             ) : null}
-            {step === 5 ? (
+            {step === 4 ? (
                 <button
                     type="button"
                     className="btn btn-sm btn-primary"
@@ -297,85 +344,82 @@ export function PoleSectorOptimizerPanel({
             showRun={false}
             footer={wizardFooter()}
         >
-            <WidgetStepWizard steps={WIZARD_STEPS} currentStep={step} />
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 12, lineHeight: 1.35 }}>
+                {WIZARD_STEPS[step - 1]}
+            </div>
 
             {step === 1 ? (
                 <>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-                        Choose where the locations that need wireless coverage come from.
-                    </p>
-                    <SourceModeToggle mode={clientSourceMode} onChange={setClientSourceMode} drawLabel="client" />
-                    {clientSourceMode === 'layer' ? (
+                    <SourceModeToggle mode={sourceMode} onChange={handleSourceModeChange} />
+                    {sourceMode === 'layer' ? (
                         <LayerSelect
-                            label="Client point layer"
-                            value={clientLayerId}
+                            label="Locations layer"
+                            value={locationsLayerId}
                             layers={layers}
-                            onChange={setClientLayerId}
-                            placeholder="- select client layer -"
+                            onChange={setLocationsLayerId}
+                            placeholder="- select layer -"
+                            headerExtra={(
+                                <button
+                                    type="button"
+                                    className="btn-icon"
+                                    onClick={() => onDownloadLocationsTemplate?.()}
+                                    title="Download CSV template"
+                                    aria-label="Download CSV template"
+                                >
+                                    📄
+                                </button>
+                            )}
                         />
                     ) : (
-                        <div className="form-group">
-                            <label>Draw client points</label>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={handleDrawClient}>
-                                Add client point
-                            </button>
-                            <div className="text-xs" style={{ marginTop: 6, color: 'var(--text-muted)' }}>
-                                {drawnClients.length} point{drawnClients.length === 1 ? '' : 's'} drawn
-                            </div>
-                        </div>
+                        <>
+                            <DrawPointsBlock
+                                label="Client points"
+                                count={drawnClients.length}
+                                drawing={drawingMode === 'client'}
+                                onStart={handleStartDrawClient}
+                                onStop={stopDrawing}
+                                disabled={Boolean(drawingMode) && drawingMode !== 'client'}
+                            />
+                            <DrawPointsBlock
+                                label="Pole points"
+                                count={drawnPoles.length}
+                                drawing={drawingMode === 'pole'}
+                                onStart={handleStartDrawPole}
+                                onStop={stopDrawing}
+                                disabled={Boolean(drawingMode) && drawingMode !== 'pole'}
+                            />
+                        </>
                     )}
                     <StatsBlock title="Client points" stats={clientStats} />
+                    <StatsBlock title="Pole points" stats={poleStats} />
                 </>
             ) : null}
 
             {step === 2 ? (
                 <>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)', marginBottom: 12 }}>
-                        Choose possible pole locations where antennas could be installed.
-                    </p>
-                    <SourceModeToggle mode={poleSourceMode} onChange={setPoleSourceMode} drawLabel="pole" />
-                    {poleSourceMode === 'layer' ? (
-                        <LayerSelect
-                            label="Pole point layer"
-                            value={poleLayerId}
-                            layers={layers}
-                            onChange={setPoleLayerId}
-                            placeholder="- select pole layer -"
-                        />
-                    ) : (
-                        <div className="form-group">
-                            <label>Draw pole points</label>
-                            <button type="button" className="btn btn-sm btn-secondary" onClick={handleDrawPole}>
-                                Add pole point
-                            </button>
-                            <div className="text-xs" style={{ marginTop: 6, color: 'var(--text-muted)' }}>
-                                {drawnPoles.length} point{drawnPoles.length === 1 ? '' : 's'} drawn
-                            </div>
-                        </div>
-                    )}
-                    <StatsBlock title="Pole points" stats={poleStats} />
-                </>
-            ) : null}
-
-            {step === 3 ? (
-                <>
                     <div className="form-group">
-                        <label>Coverage distance</label>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                            <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                value={defaultRange}
-                                onChange={(e) => setDefaultRange(e.target.value)}
-                                style={{ flex: 1 }}
-                            />
-                            <select value={units} onChange={(e) => setUnits(e.target.value)} style={{ minWidth: 100 }}>
-                                {unitOptions.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                            </select>
-                        </div>
+                        <label htmlFor="wsp-coverage-distance">Coverage distance</label>
+                        <input
+                            id="wsp-coverage-distance"
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={defaultRange}
+                            placeholder="e.g. 1"
+                            onChange={(e) => setDefaultRange(e.target.value)}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label htmlFor="wsp-coverage-units">Distance units</label>
+                        <select
+                            id="wsp-coverage-units"
+                            value={units}
+                            onChange={(e) => setUnits(e.target.value)}
+                        >
+                            {unitOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
                     </div>
                     <div className="form-group">
                         <label>Sector width mode</label>
@@ -425,7 +469,7 @@ export function PoleSectorOptimizerPanel({
                 </>
             ) : null}
 
-            {step === 4 ? (
+            {step === 3 ? (
                 <div className="text-xs" style={{ lineHeight: 1.7 }}>
                     <p style={{ marginBottom: 8 }}>Ready to run the pole / sector coverage optimizer.</p>
                     <div><strong>Client points:</strong> {clientStats?.valid ?? 0} valid</div>
@@ -441,7 +485,7 @@ export function PoleSectorOptimizerPanel({
                 </div>
             ) : null}
 
-            {step === 5 && results ? (
+            {step === 4 && results ? (
                 <div className="text-xs" style={{ lineHeight: 1.7 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Coverage summary</div>
                     <div>Total locations: {results.summary?.totalClients ?? 0}</div>
@@ -454,9 +498,6 @@ export function PoleSectorOptimizerPanel({
                         The map preview shows recommended poles, sector coverage areas, covered locations, and uncovered locations.
                         Click Create output layers to add permanent layers to the map.
                     </p>
-                    <button type="button" className="btn btn-sm btn-secondary" style={{ marginTop: 8 }} onClick={onBack}>
-                        Back to tool list
-                    </button>
                 </div>
             ) : null}
         </WidgetPanelShell>

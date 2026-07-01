@@ -222,6 +222,9 @@ function applyMapCmd(payload) {
         case 'showRouteMilepostPreview':
             mapService.showRouteMilepostPreview?.(geojson, duration ?? 0);
             break;
+        case 'showWirelessPlanningPreview':
+            mapService.showWirelessPlanningPreview?.(geojson, duration ?? 0);
+            break;
         case 'showProjectStationingPreview':
             mapService.showProjectStationingPreview?.(geojson, duration ?? 0);
             break;

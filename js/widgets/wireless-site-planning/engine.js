@@ -24,6 +24,122 @@ export const POLE_SECTOR_FIELD_KEYS = [
     'antenna_2_enabled', 'antenna_2_azimuth', 'antenna_2_sector_width', 'antenna_2_range', 'antenna_2_label'
 ];
 
+/** CSV columns for importing client and pole locations in one file. */
+export const WIRELESS_LOCATIONS_CSV_COLUMNS = [
+    'location_type',
+    'name',
+    'latitude',
+    'longitude'
+];
+
+const LOCATION_TYPE_FIELD_KEYS = ['location_type', 'type', 'point_type'];
+
+/** Sample rows along I-15 in Salt Lake City, Utah (clients + poles). */
+export const WIRELESS_LOCATIONS_CSV_SAMPLE_ROWS = [
+    {
+        location_type: 'client',
+        name: 'I-15 @ 600 South',
+        latitude: 40.7521,
+        longitude: -111.8982
+    },
+    {
+        location_type: 'client',
+        name: 'I-15 @ 2100 South',
+        latitude: 40.7248,
+        longitude: -111.8714
+    },
+    {
+        location_type: 'client',
+        name: 'Downtown Salt Lake City',
+        latitude: 40.7608,
+        longitude: -111.8910
+    },
+    {
+        location_type: 'client',
+        name: 'I-15 @ 3300 South',
+        latitude: 40.7043,
+        longitude: -111.8588
+    },
+    {
+        location_type: 'client',
+        name: 'Murray - near I-15',
+        latitude: 40.6669,
+        longitude: -111.8878
+    },
+    {
+        location_type: 'pole',
+        name: 'Pole A - 600 South',
+        latitude: 40.7535,
+        longitude: -111.8970
+    },
+    {
+        location_type: 'pole',
+        name: 'Pole B - Downtown',
+        latitude: 40.7615,
+        longitude: -111.8900
+    },
+    {
+        location_type: 'pole',
+        name: 'Pole C - Murray',
+        latitude: 40.6678,
+        longitude: -111.8865
+    }
+];
+
+function escapeCsvCell(value) {
+    const text = value == null ? '' : String(value);
+    if (/[",\r\n]/.test(text)) {
+        return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+}
+
+export function buildWirelessLocationsCsvTemplate(rows = WIRELESS_LOCATIONS_CSV_SAMPLE_ROWS) {
+    const lines = [WIRELESS_LOCATIONS_CSV_COLUMNS.join(',')];
+    rows.forEach((row) => {
+        lines.push(WIRELESS_LOCATIONS_CSV_COLUMNS.map((column) => escapeCsvCell(row[column])).join(','));
+    });
+    return `${lines.join('\r\n')}\r\n`;
+}
+
+function readLocationType(props = {}) {
+    for (const key of LOCATION_TYPE_FIELD_KEYS) {
+        const value = props[key];
+        if (value != null && String(value).trim() !== '') {
+            return String(value).trim().toLowerCase();
+        }
+    }
+    return null;
+}
+
+export function splitFeaturesByLocationType(features = []) {
+    const clients = [];
+    const poles = [];
+    const invalid = [];
+
+    features.forEach((feature, index) => {
+        const locationType = readLocationType(feature?.properties || {});
+        if (locationType === 'client') {
+            clients.push(feature);
+        } else if (locationType === 'pole') {
+            poles.push(feature);
+        } else {
+            invalid.push({
+                index,
+                reason: locationType ? 'unknown_location_type' : 'missing_location_type',
+                value: locationType
+            });
+        }
+    });
+
+    return {
+        clients,
+        poles,
+        invalid,
+        unknownTypeCount: invalid.filter((entry) => entry.reason === 'unknown_location_type').length
+    };
+}
+
 export function unitAbbr(unit) {
     return UNIT_LABELS.find((entry) => entry.value === unit)?.abbr ?? unit;
 }
@@ -117,9 +233,9 @@ export function normalizeClientPoints(features = []) {
             name: pickName(props),
             lat,
             lon,
-            coverage_status: props.coverage_status || 'unknown',
-            assigned_pole_id: props.assigned_pole_id ?? null,
-            assigned_sector_id: props.assigned_sector_id ?? null,
+            coverage_status: 'unknown',
+            assigned_pole_id: null,
+            assigned_sector_id: null,
             feature,
             featureIndex: index
         });
@@ -288,6 +404,96 @@ function evaluateSectorAtAzimuth(pole, clients, azimuth, sectorWidth, range, uni
     return { azimuth, sectorWidth, range, covered, count: covered.length };
 }
 
+function snapSectorWidthUp(degrees) {
+    const required = Math.max(0, degrees);
+    for (const option of SECTOR_WIDTH_OPTIONS) {
+        if (option >= required) return option;
+    }
+    return 360;
+}
+
+/** Minimum discrete sector width to cover clients at the given azimuth. */
+export function fitSectorWidthForClients(pole, clients, azimuth) {
+    if (!clients.length) return SECTOR_WIDTH_OPTIONS[0];
+    const deltas = clients.map((client) => angleDelta(calculateBearing(pole, client), azimuth));
+    const maxDelta = Math.max(...deltas, 0);
+    return snapSectorWidthUp(maxDelta * 2 + 1);
+}
+
+function getAutoFitWidthOptions(settings = {}) {
+    const options = settings.sectorWidthOptions || SECTOR_WIDTH_OPTIONS;
+    if (settings.allowFullCircle === false) {
+        return options.filter((width) => width < 360);
+    }
+    return options;
+}
+
+function findBestAutoFitSector(pole, clients, range, units, widthOptions) {
+    if (!clients.length || !widthOptions.length) return null;
+
+    let best = null;
+
+    for (const client of clients) {
+        const azimuth = calculateBearing(pole, client);
+        let maxCount = 0;
+
+        for (const width of widthOptions) {
+            const covered = clientsCoveredBySector(pole, clients, { azimuth, sectorWidth: width, range }, units);
+            if (covered.length > maxCount) maxCount = covered.length;
+        }
+
+        if (maxCount === 0) continue;
+
+        let coveredAtMax = [];
+        for (const width of widthOptions) {
+            const covered = clientsCoveredBySector(pole, clients, { azimuth, sectorWidth: width, range }, units);
+            if (covered.length === maxCount) {
+                coveredAtMax = covered;
+                break;
+            }
+        }
+
+        let fittedWidth = fitSectorWidthForClients(pole, coveredAtMax, azimuth);
+        if (fittedWidth > widthOptions[widthOptions.length - 1]) {
+            fittedWidth = widthOptions[widthOptions.length - 1];
+        } else if (!widthOptions.includes(fittedWidth)) {
+            fittedWidth = widthOptions.find((width) => width >= fittedWidth) ?? widthOptions[widthOptions.length - 1];
+        }
+
+        const finalCovered = clientsCoveredBySector(
+            pole,
+            clients,
+            { azimuth, sectorWidth: fittedWidth, range },
+            units
+        );
+        if (!finalCovered.length) continue;
+
+        const finalWidth = fitSectorWidthForClients(pole, finalCovered, azimuth);
+        const snappedWidth = widthOptions.includes(finalWidth)
+            ? finalWidth
+            : (widthOptions.find((width) => width >= finalWidth) ?? widthOptions[widthOptions.length - 1]);
+        const snappedCovered = clientsCoveredBySector(
+            pole,
+            clients,
+            { azimuth, sectorWidth: snappedWidth, range },
+            units
+        );
+
+        if (!best
+            || snappedCovered.length > best.coveredClients.length
+            || (snappedCovered.length === best.coveredClients.length && snappedWidth < best.sectorWidth)) {
+            best = {
+                azimuth,
+                sectorWidth: snappedWidth,
+                range,
+                coveredClients: snappedCovered
+            };
+        }
+    }
+
+    return best;
+}
+
 function findBestDirectionForWidth(pole, clients, sectorWidth, range, units) {
     if (!clients.length) return null;
 
@@ -325,28 +531,22 @@ export function findBestSectorForPole(pole, uncoveredClients, settings = {}) {
         };
     }
 
-    let bestOverall = null;
-    for (const width of SECTOR_WIDTH_OPTIONS) {
-        const candidate = findBestDirectionForWidth(pole, inRange, width, range, units);
-        if (!candidate || candidate.count === 0) continue;
-        if (!bestOverall || candidate.count > bestOverall.count
-            || (candidate.count === bestOverall.count && width < bestOverall.sectorWidth)) {
-            bestOverall = {
-                azimuth: candidate.azimuth,
-                sectorWidth: width,
-                range,
-                coveredClients: candidate.covered,
-                sectorId: `${pole.id}-sector-1`
-            };
-        }
-    }
+    const widthOptions = getAutoFitWidthOptions(settings);
+    const best = findBestAutoFitSector(pole, inRange, range, units, widthOptions);
+    if (!best) return null;
 
-    return bestOverall;
+    return {
+        ...best,
+        sectorId: `${pole.id}-sector-1`
+    };
 }
 
 export function findBestTwoSectorsForPole(pole, uncoveredClients, settings = {}) {
     const maxAntennas = settings.maxAntennasPerPole ?? 1;
-    const first = findBestSectorForPole(pole, uncoveredClients, settings);
+    const firstSettings = maxAntennas >= 2
+        ? { ...settings, allowFullCircle: false }
+        : settings;
+    const first = findBestSectorForPole(pole, uncoveredClients, firstSettings);
     if (!first) return null;
 
     const sectors = [{
@@ -418,12 +618,15 @@ export function runGreedyPoleSectorOptimization(clients = [], poles = [], settin
     const uncovered = new Map(clients.map((c) => [c.id, c]));
     const selectedPoles = [];
     const allAssignments = [];
+    const usedPoleIds = new Set();
 
     while (uncovered.size > 0) {
         let bestCandidate = null;
         let bestScore = -Infinity;
 
         for (const pole of poles) {
+            if (usedPoleIds.has(pole.id)) continue;
+
             const uncoveredList = [...uncovered.values()];
             const poleResult = findBestTwoSectorsForPole(pole, uncoveredList, { ...settings, maxAntennasPerPole: maxAntennas });
             if (!poleResult || poleResult.coveredClients.length === 0) continue;
@@ -439,6 +642,7 @@ export function runGreedyPoleSectorOptimization(clients = [], poles = [], settin
 
         if (!bestCandidate || bestCandidate.coveredClients.length === 0) break;
 
+        usedPoleIds.add(bestCandidate.pole.id);
         selectedPoles.push({
             pole: bestCandidate.pole,
             sectors: bestCandidate.sectors,
@@ -606,7 +810,9 @@ export function buildWirelessPlanningOutputLayers(result, options = {}) {
 export function buildPreviewGeojson(result, options = {}) {
     const units = options.units || 'miles';
     const includeAssignments = options.createAssignmentLines === true;
+    const allPoles = options.allPoles || [];
     const features = [];
+    const selectedPoleIds = new Set(result.selectedPoles.map((entry) => entry.pole.id));
 
     result.selectedPoles.forEach((entry) => {
         entry.sectors.forEach((sector) => {
@@ -618,34 +824,33 @@ export function buildPreviewGeojson(result, options = {}) {
                 units
             );
             polygon.properties = {
-                _preview: 'sector',
-                strokeColor: '#3b82f6',
-                fillColor: '#3b82f6',
-                fillOpacity: 0.2
+                _preview: 'sector'
             };
             features.push(polygon);
         });
 
         features.push(pointFeature(entry.pole, {
-            _preview: 'pole',
-            strokeColor: '#f97316',
-            fillColor: '#f97316'
+            _preview: 'pole'
         }));
+    });
+
+    allPoles.forEach((pole) => {
+        if (!selectedPoleIds.has(pole.id)) {
+            features.push(pointFeature(pole, {
+                _preview: 'unused_pole'
+            }));
+        }
     });
 
     result.coveredClients.forEach((client) => {
         features.push(pointFeature(client, {
-            _preview: 'covered',
-            strokeColor: '#22c55e',
-            fillColor: '#22c55e'
+            _preview: 'covered'
         }));
     });
 
     result.uncoveredClients.forEach((client) => {
         features.push(pointFeature(client, {
-            _preview: 'uncovered',
-            strokeColor: '#ef4444',
-            fillColor: '#ef4444'
+            _preview: 'uncovered'
         }));
     });
 
@@ -654,8 +859,7 @@ export function buildPreviewGeojson(result, options = {}) {
             const pole = result.selectedPoles.find((p) => p.pole.id === a.poleId)?.pole;
             if (pole) {
                 features.push(lineFeature(a.client, pole, {
-                    _preview: 'assignment',
-                    strokeColor: '#94a3b8'
+                    _preview: 'assignment'
                 }));
             }
         });
