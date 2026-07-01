@@ -4,8 +4,10 @@ import { openProximityJoin } from './proximity-join/controller.js';
 import { openRouteMilepostSegment } from './route-milepost-segment/controller.js';
 import { openProjectStationing } from './project-stationing/controller.js';
 import { openLayerMatchAssistant } from './layer-match-assistant/controller.js';
+import { openFiberSlackOtdrHelper } from './fiber-slack-otdr-helper/controller.js';
 import { openCrsManager } from './crs-manager/controller.js';
 import { openQuery } from './query/controller.js';
+import { openWirelessSitePlanning } from './wireless-site-planning/controller.js';
 import logger from '../core/logger.js';
 
 /** @typedef {import('./widget-types.js').WidgetContext} WidgetContext */
@@ -70,6 +72,22 @@ export const GIS_WIDGETS = [
         icon: '🔍',
         tip: 'Find features by attribute values and highlight, zoom, or select results on the map.',
         open: openQuery
+    },
+    {
+        type: 'wireless-site-planning',
+        action: 'openWirelessSitePlanning',
+        label: 'Wireless Site Planning',
+        icon: '📡',
+        tip: 'Plan wireless pole locations, antenna sectors, and coverage areas.',
+        open: openWirelessSitePlanning
+    },
+    {
+        type: 'fiber-slack-otdr-helper',
+        action: 'openFiberSlackOtdrHelper',
+        label: 'Fiber Slack / OTDR Helper',
+        icon: '🔌',
+        tip: 'Estimate OTDR distance, fiber slack, and map distance along line routes.',
+        open: openFiberSlackOtdrHelper
     }
 ];
 
