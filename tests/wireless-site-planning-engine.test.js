@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+    ANTENNA_INDICATOR_DEFAULTS,
     buildPreviewGeojson,
     buildWirelessLocationsCsvTemplate,
     buildWirelessPlanningOutputLayers,
     calculateBearing,
     calculateDistance,
+    createAntennaIndicatorSector,
     createDefaultPoleSectorAttributes,
     createSectorPolygon,
     createAntennaLobePolygon,
@@ -100,6 +102,50 @@ describe('wireless-site-planning geometry', () => {
         expect(polygon.geometry.coordinates[0].length).toBeGreaterThan(3);
     });
 
+    it('creates small antenna indicator sector polygons at fixed radius', () => {
+        const sector = {
+            sectorId: 'p1-sector-a',
+            azimuth: 0,
+            sectorWidth: 45,
+            range: 1,
+            antennaNumber: 1
+        };
+        const indicator = createAntennaIndicatorSector(POLE_CENTER, sector, 'meters');
+        expect(indicator.geometry.type).toBe('Polygon');
+        expect(indicator.properties.coverage_shape).toBe('antenna_indicator');
+        expect(indicator.properties.azimuth).toBe(0);
+        expect(indicator.properties.antenna_number).toBe(1);
+        expect(indicator.properties.indicator_width).toBe(ANTENNA_INDICATOR_DEFAULTS.widthDegrees);
+
+        const ring = indicator.geometry.coordinates[0];
+        const maxDistM = Math.max(...ring.map((coord) =>
+            calculateDistance(POLE_CENTER, { lon: coord[0], lat: coord[1] }, 'meters')
+        ));
+        expect(maxDistM).toBeGreaterThan(45);
+        expect(maxDistM).toBeLessThan(55);
+
+        const centroid = {
+            lon: ring.reduce((sum, coord) => sum + coord[0], 0) / ring.length,
+            lat: ring.reduce((sum, coord) => sum + coord[1], 0) / ring.length
+        };
+        const centroidBearing = calculateBearing(POLE_CENTER, centroid);
+        expect(Math.abs(((centroidBearing - 0 + 540) % 360) - 180)).toBeLessThan(20);
+    });
+
+    it('assigns distinct indicator colors per antenna number', () => {
+        const base = { azimuth: 90, sectorWidth: 45, range: 1 };
+        const a1 = createAntennaIndicatorSector(POLE_CENTER, { ...base, sectorId: 's1', antennaNumber: 1 }, 'meters');
+        const a2 = createAntennaIndicatorSector(POLE_CENTER, { ...base, sectorId: 's2', antennaNumber: 2 }, 'meters');
+        expect(a1.properties.fill).not.toBe(a2.properties.fill);
+        expect(a2.properties.fill).toBe('#c084fc');
+    });
+
+    it('tags indicator sectors for preview rendering', () => {
+        const sector = { sectorId: 's', azimuth: 0, sectorWidth: 45, range: 1, antennaNumber: 1 };
+        const indicator = createAntennaIndicatorSector(POLE_CENTER, sector, 'miles', { preview: true });
+        expect(indicator.properties._preview).toBe('antenna_indicator');
+    });
+
     it('creates a radiation pattern outline with a dominant main lobe and minimal back response', () => {
         const outline = createRadiationPatternOutline(POLE_CENTER, 0, 45, 1, 'miles', { outlineSteps: 144 });
         expect(outline.geometry.type).toBe('LineString');
@@ -156,7 +202,7 @@ describe('wireless-site-planning geometry', () => {
         expect(atPole).toBeLessThanOrEqual(2);
     });
 
-    it('builds heatmap points and pattern outline for display', () => {
+    it('builds radiation pattern outline for display', () => {
         const sector = {
             sectorId: 'p1-sector-a',
             azimuth: 0,
@@ -165,14 +211,24 @@ describe('wireless-site-planning geometry', () => {
             antennaNumber: 1,
             coveredClients: [{ id: 'c1' }]
         };
+
+        const features = createAntennaCoverageFeatures(POLE_CENTER, sector, 'miles', { preview: true });
+        expect(features.some((f) => f.properties._preview === 'coverage_heat')).toBe(false);
+        expect(features.filter((f) => f.properties._preview === 'pattern_outline')).toHaveLength(1);
+        expect(features.some((f) => f.properties.coverage_shape === 'main_lobe_fill')).toBe(false);
+    });
+
+    it('keeps legacy heatmap point helper for sampling tests', () => {
+        const sector = {
+            sectorId: 'p1-sector-a',
+            azimuth: 0,
+            sectorWidth: 45,
+            range: 1,
+            antennaNumber: 1
+        };
         const heat = createAntennaHeatmapPoints(POLE_CENTER, sector, 'miles');
         expect(heat.length).toBeGreaterThan(20);
         expect(heat[0].properties.signal).toBeGreaterThan(0);
-
-        const features = createAntennaCoverageFeatures(POLE_CENTER, sector, 'miles', { preview: true });
-        expect(features.some((f) => f.properties._preview === 'coverage_heat')).toBe(true);
-        expect(features.filter((f) => f.properties._preview === 'pattern_outline')).toHaveLength(1);
-        expect(features.some((f) => f.properties.coverage_shape === 'main_lobe_fill')).toBe(false);
     });
 
     it('detects whether a client point is inside a sector', () => {
@@ -346,8 +402,12 @@ describe('wireless-site-planning output layers', () => {
         expect(layers.sectorCoverage.features.length).toBeGreaterThan(0);
         expect(layers.sectorCoverage.features.every((f) => f.geometry.type === 'LineString')).toBe(true);
         expect(layers.sectorCoverage.features.every((f) => f.properties.coverage_shape === 'radiation_pattern')).toBe(true);
-        expect(layers.coverageHeatmap.features.length).toBeGreaterThan(0);
-        expect(layers.coverageHeatmap.features[0].properties.signal).toBeGreaterThan(0);
+        expect(layers.antennaIndicators.features.length).toBeGreaterThan(0);
+        expect(layers.antennaIndicators.features.every((f) => f.geometry.type === 'Polygon')).toBe(true);
+        expect(layers.antennaIndicators.features.every((f) => f.properties.coverage_shape === 'antenna_indicator')).toBe(true);
+        expect(layers.coverageRasters.length).toBeGreaterThan(0);
+        expect(layers.coverageRasters[0].bbox).toHaveLength(4);
+        expect(layers.coverageRasters[0].width).toBeLessThanOrEqual(1024);
 
         expect(layers.coveredClients.features.length).toBe(1);
         expect(layers.coveredClients.features[0].properties).toHaveProperty('assigned_pole_id');
@@ -384,6 +444,7 @@ describe('wireless-site-planning output layers', () => {
         const previews = preview.features.map((f) => f.properties._preview);
         expect(previews).toContain('pole');
         expect(previews).toContain('unused_pole');
+        expect(previews).toContain('antenna_indicator');
         expect(previews.filter((p) => p === 'unused_pole')).toHaveLength(1);
     });
 });

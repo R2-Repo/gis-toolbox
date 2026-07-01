@@ -35,6 +35,7 @@ import { guardFilesBeforeImport } from '../import/import-guard.js';
 import { assessImportRoute, shouldConvertToWorkspace, arcgisShouldUseWorkspace } from '../import/import-routing.js';
 import { ErrorCategory } from '../core/error-handler.js';
 import { getAvailableFormats, exportDataset, exportMultiLayerKMZFile, exportMultiLayerKMLFile, setExportMapManager } from '../export/exporter.js';
+import { isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import mapService from '../map/map-service.js';
 import { isSmartStyleActive } from '../map/style-engine.js';
 import dualScreenCoordinator from '../dual-screen/coordinator.js';
@@ -4060,7 +4061,13 @@ export async function doExport(format) {
             exportOptions = { targetCrs: picked.targetCrs, sourceCrs: ds.schema?.crs };
         }
 
-        await exportDataset(ds, format, exportOptions);
+        let exportFormat = format;
+        if (isCoverageRasterLayer(ds) && format === 'kmz') {
+            exportFormat = 'coverage-kmz';
+            showToast('Exporting coverage as KMZ image overlay.', 'info');
+        }
+
+        await exportDataset(ds, exportFormat, exportOptions);
     } catch (e) {
         showErrorToast(handleError(e, 'Export', format));
     }

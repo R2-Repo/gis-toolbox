@@ -13,6 +13,39 @@ import {
     splitFeaturesByLocationType,
     validateWirelessPlanningInputs
 } from './engine.js';
+import {
+    buildCoverageRasterBoundsGeojson,
+    buildCoverageRasters
+} from './coverage-raster.js';
+
+const ANTENNA_SECTOR_LAYER_STYLE = {
+    mode: 'smart',
+    fillColor: '#38bdf8',
+    strokeColor: '#0ea5e9',
+    fillOpacity: 0.35,
+    strokeWidth: 2,
+    strokeOpacity: 0.9,
+    smart: {
+        defaultStyle: {
+            fillColor: '#38bdf8',
+            strokeColor: '#0ea5e9',
+            fillOpacity: 0.35,
+            strokeWidth: 2,
+            strokeOpacity: 0.9
+        },
+        visualVariables: [{
+            id: 'antenna-indicator-color',
+            type: 'unique',
+            field: 'antenna_number',
+            channel: 'both',
+            classes: [
+                { value: '1', color: '#38bdf8', style: { fillColor: '#38bdf8', strokeColor: '#0ea5e9' } },
+                { value: '2', color: '#c084fc', style: { fillColor: '#c084fc', strokeColor: '#9333ea' } }
+            ]
+        }],
+        filterRules: []
+    }
+};
 
 function getLayerFeatures(ctx, layerId) {
     const layer = ctx.getLayers().find((l) => l.id === layerId);
@@ -78,11 +111,13 @@ function addDerivedLayer(ctx, name, fc, options = {}) {
     return dataset;
 }
 
-function addCoverageHeatmapLayer(ctx, name, fc, options = {}) {
-    const dataset = ctx.createSpatialDataset(name, fc, {
+function addCoverageHeatmapLayer(ctx, name, coverageRasters, options = {}) {
+    const boundsGeojson = buildCoverageRasterBoundsGeojson(coverageRasters);
+    const dataset = ctx.createSpatialDataset(name, boundsGeojson, {
         format: 'derived',
         widget: 'wireless-site-planning',
-        coverageType: 'heatmap',
+        coverageType: 'raster',
+        coverageRasters,
         ...(options.source || {})
     });
     ctx.addLayer(dataset);
@@ -119,10 +154,11 @@ function clearPreviewEntries(ctx, state) {
         ctx.mapService.removeTempFeature?.(state.optimizationPreviewEntry);
         state.optimizationPreviewEntry = null;
     }
+    ctx.mapService.clearTempFeatures?.();
 }
 
-function showWirelessPreview(ctx, geojson) {
-    return ctx.mapService.showWirelessPlanningPreview?.(geojson, 0)
+function showWirelessPreview(ctx, geojson, coverageRasters = []) {
+    return ctx.mapService.showWirelessPlanningPreview?.(geojson, { duration: 0, coverageRasters })
         ?? ctx.mapService.showTempFeature?.(geojson, 0)
         ?? null;
 }
@@ -136,7 +172,7 @@ function showDrawPreview(ctx, state, geojson) {
     state.drawPreviewEntry = showWirelessPreview(ctx, geojson);
 }
 
-function showOptimizationPreview(ctx, state, geojson) {
+function showOptimizationPreview(ctx, state, geojson, coverageRasters = []) {
     if (state.drawPreviewEntry) {
         ctx.mapService.removeTempFeature?.(state.drawPreviewEntry);
         state.drawPreviewEntry = null;
@@ -145,7 +181,7 @@ function showOptimizationPreview(ctx, state, geojson) {
         ctx.mapService.removeTempFeature?.(state.optimizationPreviewEntry);
         state.optimizationPreviewEntry = null;
     }
-    state.optimizationPreviewEntry = showWirelessPreview(ctx, geojson);
+    state.optimizationPreviewEntry = showWirelessPreview(ctx, geojson, coverageRasters);
 }
 
 function buildDrawnClientFeature(coord, seq) {
@@ -202,8 +238,9 @@ export async function openWirelessSitePlanning(ctx) {
         optimizationPreviewEntry: null
     };
 
-    const clearPreview = () => {
+    const cleanup = () => {
         clearPreviewEntries(ctx, previewState);
+        ctx.mapService.cancelInteraction?.();
     };
 
     await openReactIsland({
@@ -211,19 +248,22 @@ export async function openWirelessSitePlanning(ctx) {
         width: '560px',
         mountPath: '../../../react/widgets/mountWirelessSitePlanningDialog.jsx',
         mountExport: 'mountWirelessSitePlanningDialog',
-        getProps: (close) => ({
-            closeWidget: close,
-            layers: getSpatialLayerOptions(ctx, { includeFields: true, requirePoints: true }),
-            unitOptions: UNIT_LABELS.map((entry) => ({
-                value: entry.value,
-                label: `${entry.label} (${entry.abbr})`
-            })),
-            onCancel: () => {
-                clearPreview();
-                ctx.mapService.cancelInteraction?.();
+        getProps: (close) => {
+            const closeWidget = () => {
+                cleanup();
                 close();
-            },
-            onValidateLocations: async ({ sourceMode, locationsLayerId, drawnClients, drawnPoles, settings }) => {
+            };
+
+            return {
+                closeWidget,
+                onCleanup: cleanup,
+                layers: getSpatialLayerOptions(ctx, { includeFields: true, requirePoints: true }),
+                unitOptions: UNIT_LABELS.map((entry) => ({
+                    value: entry.value,
+                    label: `${entry.label} (${entry.abbr})`
+                })),
+                onCancel: closeWidget,
+                onValidateLocations: async ({ sourceMode, locationsLayerId, drawnClients, drawnPoles, settings }) => {
                 const resolved = resolveLocationFeatures(
                     { sourceMode, locationsLayerId, drawnClients, drawnPoles },
                     ctx
@@ -282,8 +322,9 @@ export async function openWirelessSitePlanning(ctx) {
                     createAssignmentLines: settings.createAssignmentLines,
                     allPoles: poles
                 });
+                const coverageRasters = buildCoverageRasters(result.selectedPoles, settings.units);
 
-                showOptimizationPreview(ctx, previewState, previewGeojson);
+                showOptimizationPreview(ctx, previewState, previewGeojson, coverageRasters);
 
                 ctx.showToast?.(
                     `Covered ${result.summary.coveredClients} of ${result.summary.totalClients} locations (${result.summary.coveragePercent}%)`,
@@ -306,14 +347,15 @@ export async function openWirelessSitePlanning(ctx) {
                 let created = 0;
                 let fitNext = true;
 
-                if (layers.coverageHeatmap?.features?.length) {
-                    addCoverageHeatmapLayer(ctx, 'Wireless Signal Heatmap', layers.coverageHeatmap, { fit: fitNext });
+                if (layers.coverageRasters?.length) {
+                    addCoverageHeatmapLayer(ctx, 'Wireless Signal Coverage', layers.coverageRasters, { fit: fitNext });
                     fitNext = false;
                     created++;
                 }
 
                 const layerDefs = [
                     { name: 'Wireless Radiation Pattern', fc: layers.sectorCoverage, style: { mode: 'simple', strokeColor: '#dc2626', strokeWidth: 2.5, fillOpacity: 0 } },
+                    { name: 'Wireless Antenna Sectors', fc: layers.antennaIndicators, style: ANTENNA_SECTOR_LAYER_STYLE },
                     { name: 'Wireless Recommended Poles', fc: layers.recommendedPoles, style: { mode: 'simple', fillColor: '#ef4444', strokeColor: '#dc2626' } },
                     { name: 'Wireless Covered Clients', fc: layers.coveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } },
                     { name: 'Wireless Uncovered Clients', fc: layers.uncoveredClients, style: { mode: 'simple', fillColor: '#2563eb', strokeColor: '#1d4ed8', pointSymbol: 'square' } }
@@ -342,8 +384,11 @@ export async function openWirelessSitePlanning(ctx) {
                     throw new Error('No output features to create.');
                 }
 
+                clearPreviewEntries(ctx, previewState);
+
                 ctx.showToast?.(`Created ${created} wireless planning layer${created === 1 ? '' : 's'}.`, 'success');
             }
-        })
+        };
+        }
     });
 }

@@ -1,4 +1,5 @@
 import * as turf from '@turf/turf';
+import { buildCoverageRasters } from './coverage-raster.js';
 
 export const UNIT_LABELS = [
     { value: 'feet', label: 'Feet', abbr: 'ft' },
@@ -161,6 +162,18 @@ export function distanceToMeters(value, units) {
 
 export const DEFAULT_SECTOR_WIDTH = 45;
 
+/** Small pie-wedge symbols — antenna presence + azimuth (export-friendly, not coverage). */
+export const ANTENNA_INDICATOR_DEFAULTS = {
+    widthDegrees: 30,
+    radiusMeters: 50,
+    steps: 16
+};
+
+export const ANTENNA_INDICATOR_COLORS = {
+    1: { fill: '#38bdf8', stroke: '#0ea5e9', fillOpacity: 0.35 },
+    2: { fill: '#c084fc', stroke: '#9333ea', fillOpacity: 0.35 }
+};
+
 /**
  * Forward side lobes (display only).
  * Positive offsets only — bearing trace uses symmetric angleDelta from boresight.
@@ -261,6 +274,44 @@ export function signalStrengthAt(relativeAngleDeg, distance, range, sectorWidth 
     const angularGain = radiationPatternGain(relativeAngleDeg, sectorWidth);
     const radialGain = Math.max(0, 1 - Math.pow(distance / range, 1.35));
     return angularGain * radialGain;
+}
+
+/** Tuning for coverage raster — matches radiation-pattern outline envelope. */
+export const COVERAGE_DISPLAY_DEFAULTS = {
+    /** Higher = slower falloff; warm colors reach farther along the main lobe. */
+    radialPower: 1.18,
+    minRadiusFactor: LOBE_PATTERN_DEFAULTS.outlineMinRadiusFactor,
+    /** < 1 lifts mid-range display values toward warm colors. */
+    signalGamma: 0.76
+};
+
+/**
+ * Coverage raster signal — clipped to the same envelope as createRadiationPatternOutline,
+ * with gentler radial falloff so warm colors extend toward the lobe tip.
+ */
+export function signalStrengthForCoverageDisplay(
+    relativeAngleDeg,
+    distance,
+    range,
+    sectorWidth = DEFAULT_SECTOR_WIDTH,
+    options = {}
+) {
+    const {
+        radialPower = COVERAGE_DISPLAY_DEFAULTS.radialPower,
+        minRadiusFactor = COVERAGE_DISPLAY_DEFAULTS.minRadiusFactor,
+        signalGamma = COVERAGE_DISPLAY_DEFAULTS.signalGamma
+    } = options;
+
+    const angularGain = radiationPatternGain(relativeAngleDeg, sectorWidth);
+    const envelopeRadius = range * Math.max(angularGain, minRadiusFactor);
+
+    if (distance >= envelopeRadius || envelopeRadius <= 0) return 0;
+
+    const radialGain = 1 - Math.pow(distance / envelopeRadius, radialPower);
+    const signal = angularGain * radialGain;
+    if (signal <= 0) return 0;
+
+    return Math.pow(signal, signalGamma);
 }
 
 export function createDefaultPoleSectorAttributes(defaultRange = 1, defaultWidth = DEFAULT_SECTOR_WIDTH, units = 'miles') {
@@ -485,6 +536,68 @@ export function createSectorPolygon(pole, azimuth, width, range, units = 'miles'
     return turf.sector(center, range, startBearing, endBearing, { units, steps });
 }
 
+function metersToUnits(meters, units) {
+    switch (units) {
+        case 'feet':
+            return meters * 3.28084;
+        case 'kilometers':
+            return meters / 1000;
+        case 'miles':
+            return meters * 0.000621371;
+        default:
+            return meters;
+    }
+}
+
+function indicatorColorsForAntenna(antennaNumber) {
+    return ANTENNA_INDICATOR_COLORS[antennaNumber] || ANTENNA_INDICATOR_COLORS[1];
+}
+
+/** Small fixed-size sector wedge for antenna direction (map + export). */
+export function createAntennaIndicatorSector(pole, sector, units = 'miles', options = {}) {
+    const {
+        widthDegrees = ANTENNA_INDICATOR_DEFAULTS.widthDegrees,
+        radiusMeters = ANTENNA_INDICATOR_DEFAULTS.radiusMeters,
+        steps = ANTENNA_INDICATOR_DEFAULTS.steps,
+        preview = false
+    } = options;
+
+    const indicatorRadius = metersToUnits(radiusMeters, units);
+    const antennaNumber = sector.antennaNumber ?? 1;
+    const colors = indicatorColorsForAntenna(antennaNumber);
+    const center = turf.point([pole.lon, pole.lat]);
+
+    let feature;
+    if ((sector.sectorWidth ?? 0) >= 360) {
+        feature = turf.circle(center, indicatorRadius, { units, steps: Math.max(steps, 16) });
+    } else {
+        feature = createSectorPolygon(pole, sector.azimuth, widthDegrees, indicatorRadius, units, steps);
+    }
+
+    feature.properties = {
+        pole_id: pole.id,
+        sector_id: sector.sectorId,
+        antenna_number: antennaNumber,
+        azimuth: sector.azimuth,
+        sector_width: sector.sectorWidth,
+        indicator_width: widthDegrees,
+        indicator_radius: indicatorRadius,
+        indicator_radius_meters: radiusMeters,
+        coverage_shape: 'antenna_indicator',
+        fill: colors.fill,
+        stroke: colors.stroke,
+        'fill-opacity': colors.fillOpacity,
+        'stroke-width': 2,
+        'stroke-opacity': 0.9
+    };
+
+    if (preview) {
+        feature.properties._preview = 'antenna_indicator';
+    }
+
+    return feature;
+}
+
 /** @deprecated Optimizer wedge helper — kept for tests. Display uses radiation pattern. */
 export function lobeRangeFactor(angleDeltaDeg, sectorWidth, lobePower = 2) {
     if (sectorWidth >= 360) return 1;
@@ -542,26 +655,33 @@ export function createAntennaHeatmapPoints(pole, sector, units = 'miles', option
     const center = turf.point([pole.lon, pole.lat]);
     const features = [];
 
+    const pushHeatmapPoint = (geometry, signal) => {
+        features.push({
+            type: 'Feature',
+            geometry,
+            properties: {
+                signal: Math.round(signal * 1000) / 1000,
+                pole_id: pole.id,
+                sector_id: sector.sectorId,
+                antenna_number: sector.antennaNumber ?? 1,
+                coverage_shape: 'heatmap'
+            }
+        });
+    };
+
+    pushHeatmapPoint(center.geometry, 1);
+
     for (let ri = 1; ri <= radialSteps; ri++) {
         const dist = (range * ri) / radialSteps;
-        for (let ai = 0; ai < angularSteps; ai++) {
-            const bearing = (360 * ai) / angularSteps;
+        const stepsThisRing = Math.max(8, Math.ceil(angularSteps * ri / radialSteps));
+        for (let ai = 0; ai < stepsThisRing; ai++) {
+            const bearing = (360 * ai) / stepsThisRing;
             const rel = angleDelta(bearing, azimuth);
             const signal = signalStrengthAt(rel, dist, range, sectorWidth);
             if (signal < signalThreshold) continue;
 
             const point = turf.destination(center, dist, bearing, { units });
-            features.push({
-                type: 'Feature',
-                geometry: point.geometry,
-                properties: {
-                    signal: Math.round(signal * 1000) / 1000,
-                    pole_id: pole.id,
-                    sector_id: sector.sectorId,
-                    antenna_number: sector.antennaNumber ?? 1,
-                    coverage_shape: 'heatmap'
-                }
-            });
+            pushHeatmapPoint(point.geometry, signal);
         }
     }
 
@@ -593,17 +713,9 @@ function buildCoverageVisualProperties(sector, pole, visualType, { preview = fal
     return props;
 }
 
-/** Heatmap points + radiation pattern trace for map display. */
+/** Radiation pattern trace for map display (coverage fill uses georeferenced rasters). */
 export function createAntennaCoverageFeatures(pole, sector, units = 'miles', options = {}) {
     const features = [];
-
-    createAntennaHeatmapPoints(pole, sector, units, options).forEach((point) => {
-        point.properties = {
-            ...point.properties,
-            ...buildCoverageVisualProperties(sector, pole, 'heatmap', options)
-        };
-        features.push(point);
-    });
 
     const outline = createRadiationPatternOutline(
         pole,
@@ -1006,12 +1118,14 @@ export function buildWirelessPlanningOutputLayers(result, options = {}) {
         )
     };
 
-    const coverageHeatmap = {
+    const antennaIndicators = {
         type: 'FeatureCollection',
         features: result.selectedPoles.flatMap((entry) =>
-            entry.sectors.flatMap((sector) => createAntennaHeatmapPoints(entry.pole, sector, units))
+            entry.sectors.map((sector) => createAntennaIndicatorSector(entry.pole, sector, units))
         )
     };
+
+    const coverageRasters = buildCoverageRasters(result.selectedPoles, units);
 
     const clientAssignments = {
         type: 'FeatureCollection',
@@ -1050,7 +1164,8 @@ export function buildWirelessPlanningOutputLayers(result, options = {}) {
     return {
         recommendedPoles,
         sectorCoverage,
-        coverageHeatmap,
+        antennaIndicators,
+        coverageRasters,
         clientAssignments,
         coveredClients,
         uncoveredClients
@@ -1068,6 +1183,7 @@ export function buildPreviewGeojson(result, options = {}) {
         entry.sectors.forEach((sector) => {
             createAntennaCoverageFeatures(entry.pole, sector, units, { preview: true })
                 .forEach((feature) => features.push(feature));
+            features.push(createAntennaIndicatorSector(entry.pole, sector, units, { preview: true }));
         });
 
         features.push(pointFeature(entry.pole, {

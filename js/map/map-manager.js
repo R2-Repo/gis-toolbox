@@ -6,6 +6,7 @@ import logger from '../core/logger.js';
 import bus from '../core/event-bus.js';
 import { getActiveLayer, setActiveLayer } from '../core/state.js';
 import { flattenFeatureGeometryCollections, isWorkspaceLayer } from '../core/data-model.js';
+import { getCoverageRasters, isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import { MAP_CHUNK_BATCH_SIZE, RENDER_LIMITS } from './render-limits.js';
 import { buildViewportGeoJSON } from '../workspace/viewport-loader.js';
 import { getWorkspaceFeatureAttributes, getWorkspaceLayerBounds } from '../workspace/workspace-store.js';
@@ -101,23 +102,10 @@ const LAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0
 
 const POINT_SYMBOL_NAMES = ['circle', 'square', 'triangle', 'diamond', 'star', 'pin'];
 
-const WIRELESS_COVERAGE_HEATMAP_PAINT = {
-    'heatmap-weight': ['interpolate', ['linear'], ['get', 'signal'], 0, 0, 1, 1],
-    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 14, 1.4],
-    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 18, 14, 36],
-    'heatmap-opacity': 0.78,
-    'heatmap-color': [
-        'interpolate',
-        ['linear'],
-        ['heatmap-density'],
-        0, 'rgba(0,0,255,0)',
-        0.12, '#1d4ed8',
-        0.28, '#06b6d4',
-        0.45, '#22c55e',
-        0.62, '#eab308',
-        0.78, '#f97316',
-        1, '#ef4444'
-    ]
+const WIRELESS_COVERAGE_RASTER_PAINT = {
+    'raster-opacity': 0.78,
+    'raster-fade-duration': 0,
+    'raster-resampling': 'linear'
 };
 
 /** MapLibre filter (boolean expression): geometry-type is one of the given GeoJSON types */
@@ -546,6 +534,16 @@ class MapManager {
         if (isWorkspaceLayer(dataset)) {
             return this.addWorkspaceLayer(dataset, colorIndex, { fit });
         }
+        if (isCoverageRasterLayer(dataset)) {
+            const rasters = getCoverageRasters(dataset);
+            if (rasters.length) {
+                return this.addCoverageHeatmapLayer(dataset, colorIndex, { fit });
+            }
+            logger.warn('Map', 'Coverage raster layer missing image data; showing bounds only', {
+                name: dataset.name,
+                id: dataset.id
+            });
+        }
         if (!dataset.geojson) return;
 
         this.removeLayer(dataset.id);
@@ -750,31 +748,68 @@ class MapManager {
         bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
     }
 
-    /** Permanent wireless signal heatmap layer (point samples with signal property). */
+    /** Install georeferenced wireless coverage rasters (image source + raster layer). */
+    _addCoverageRasterLayers(coverageRasters = [], prefix = 'coverage') {
+        const layerIds = [];
+        const extraSourceIds = [];
+
+        coverageRasters.forEach((raster, index) => {
+            if (!raster?.dataUrl || !raster?.coordinates?.length) return;
+
+            const sourceId = `${prefix}-raster-src-${index}`;
+            const layerId = `${prefix}-raster-${index}`;
+
+            this.map.addSource(sourceId, {
+                type: 'image',
+                url: raster.dataUrl,
+                coordinates: raster.coordinates
+            });
+            this.map.addLayer({
+                id: layerId,
+                type: 'raster',
+                source: sourceId,
+                paint: WIRELESS_COVERAGE_RASTER_PAINT
+            });
+
+            extraSourceIds.push(sourceId);
+            layerIds.push(layerId);
+        });
+
+        return { layerIds, extraSourceIds };
+    }
+
+    /** Permanent wireless signal coverage raster layer(s). */
     addCoverageHeatmapLayer(dataset, colorIndex = 0, { fit = false } = {}) {
-        if (!this.map || !dataset?.geojson) return;
+        if (!this.map || !dataset) return;
 
         this.removeLayer(dataset.id);
 
+        const coverageRasters = dataset.source?.coverageRasters || [];
+        if (!coverageRasters.length) return;
+
         const taggedFeatures = _tagFeaturesForMap(dataset).filter(
-            (f) => f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
+            (f) => f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
         );
         const geojson = { type: 'FeatureCollection', features: taggedFeatures };
-        const sourceId = `src-${dataset.id}`;
-        const heatId = `${dataset.id}-heat`;
+        const sourceId = taggedFeatures.length ? `src-${dataset.id}` : null;
 
-        this.map.addSource(sourceId, { type: 'geojson', data: geojson });
-        this.map.addLayer({
-            id: heatId,
-            type: 'heatmap',
-            source: sourceId,
-            paint: WIRELESS_COVERAGE_HEATMAP_PAINT
-        });
+        if (sourceId) {
+            this.map.addSource(sourceId, { type: 'geojson', data: geojson });
+        }
+
+        const rasterInstall = this._addCoverageRasterLayers(coverageRasters, dataset.id);
+        const chunkSources = [
+            ...(sourceId ? [{ sourceId, layerIds: [] }] : []),
+            ...rasterInstall.extraSourceIds.map((rasterSourceId, index) => ({
+                sourceId: rasterSourceId,
+                layerIds: [rasterInstall.layerIds[index]]
+            }))
+        ];
 
         this.dataLayers.set(dataset.id, {
-            sourceId,
-            layerIds: [heatId],
-            chunkSources: [{ sourceId, layerIds: [heatId] }],
+            sourceId: sourceId || rasterInstall.extraSourceIds[0],
+            layerIds: rasterInstall.layerIds,
+            chunkSources,
             colorIndex,
             geojson,
             scaleRange: normalizeScaleRange(dataset)
@@ -782,18 +817,31 @@ class MapManager {
         this._storeLayerScaleRange(dataset);
         this._layerNames.set(dataset.id, dataset.name);
 
-        if (fit && taggedFeatures.length) {
+        if (fit) {
             try {
-                const bbox = turf.bbox(geojson);
+                const bbox = coverageRasters.reduce((acc, raster) => {
+                    if (!raster?.bbox) return acc;
+                    const [west, south, east, north] = raster.bbox;
+                    if (!acc) return [west, south, east, north];
+                    return [
+                        Math.min(acc[0], west),
+                        Math.min(acc[1], south),
+                        Math.max(acc[2], east),
+                        Math.max(acc[3], north)
+                    ];
+                }, null);
                 if (bbox && isFinite(bbox[0])) {
                     this.map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 30, maxZoom: 16 });
                 }
             } catch (e) {
-                logger.warn('Map', 'Could not fit heatmap bounds', { error: e.message });
+                logger.warn('Map', 'Could not fit coverage raster bounds', { error: e.message });
             }
         }
 
-        logger.info('Map', 'Coverage heatmap layer added', { name: dataset.name, points: taggedFeatures.length });
+        logger.info('Map', 'Coverage raster layer added', {
+            name: dataset.name,
+            rasters: coverageRasters.length
+        });
         bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
     }
 
@@ -2913,26 +2961,27 @@ class MapManager {
     }
 
     /**
-     * Wireless site planning preview: heatmap signal, pattern outline, blue square clients, red poles.
-     * _preview: draw_client | covered | uncovered | draw_pole | pole | unused_pole | coverage_heat | pattern_outline | assignment.
+     * Wireless site planning preview: coverage rasters, pattern outline, blue square clients, red poles.
+     * _preview: draw_client | covered | uncovered | draw_pole | pole | unused_pole | pattern_outline | antenna_indicator | assignment.
      */
-    showWirelessPlanningPreview(geojson, duration = 0) {
+    showWirelessPlanningPreview(geojson, options = 0) {
+        let duration = 0;
+        let coverageRasters = [];
+        if (typeof options === 'number') {
+            duration = options;
+        } else {
+            duration = options.duration ?? 0;
+            coverageRasters = options.coverageRasters ?? [];
+        }
+
         const srcId = this._nextId('temp');
         this.map.addSource(srcId, { type: 'geojson', data: geojson });
         const layerIds = [];
+        const extraSourceIds = [];
 
-        const heatmapId = srcId + '-coverage-heat';
-        this.map.addLayer({
-            id: heatmapId,
-            type: 'heatmap',
-            source: srcId,
-            filter: ['all',
-                _geomTypesFilter(['Point', 'MultiPoint']),
-                ['==', ['get', '_preview'], 'coverage_heat']
-            ],
-            paint: WIRELESS_COVERAGE_HEATMAP_PAINT
-        });
-        layerIds.push(heatmapId);
+        const rasterInstall = this._addCoverageRasterLayers(coverageRasters, srcId);
+        layerIds.push(...rasterInstall.layerIds);
+        extraSourceIds.push(...rasterInstall.extraSourceIds);
 
         const patternOutlineId = srcId + '-pattern-outline';
         this.map.addLayer({
@@ -2959,6 +3008,39 @@ class MapManager {
             paint: { 'line-color': '#dc2626', 'line-width': 2.5, 'line-opacity': 0.95 }
         });
         layerIds.push(patternOutlineLegacyId);
+
+        const antennaIndicatorFillId = srcId + '-antenna-indicator-fill';
+        this.map.addLayer({
+            id: antennaIndicatorFillId,
+            type: 'fill',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'antenna_indicator']
+            ],
+            paint: {
+                'fill-color': ['coalesce', ['get', 'fill'], '#38bdf8'],
+                'fill-opacity': ['coalesce', ['to-number', ['get', 'fill-opacity']], 0.35]
+            }
+        });
+        layerIds.push(antennaIndicatorFillId);
+
+        const antennaIndicatorOutlineId = srcId + '-antenna-indicator-outline';
+        this.map.addLayer({
+            id: antennaIndicatorOutlineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'antenna_indicator']
+            ],
+            paint: {
+                'line-color': ['coalesce', ['get', 'stroke'], '#0ea5e9'],
+                'line-width': ['coalesce', ['to-number', ['get', 'stroke-width']], 2],
+                'line-opacity': ['coalesce', ['to-number', ['get', 'stroke-opacity']], 0.9]
+            }
+        });
+        layerIds.push(antennaIndicatorOutlineId);
 
         const assignmentLineId = srcId + '-assignment-line';
         this.map.addLayer({
@@ -3018,17 +3100,13 @@ class MapManager {
         });
         layerIds.push(poleCircleId);
 
-        const entry = { srcId, layerIds };
+        const entry = { srcId, layerIds, extraSourceIds };
         this._tempLayers.push(entry);
 
         if (duration > 0) setTimeout(() => this._removeTempFeature(entry), duration);
         return entry;
     }
 
-    /**
-     * Route milepost widget preview: red route lines, bright-green milepost points.
-     * Features should set properties._preview to route | centerline_segment | start_mp | end_mp.
-     */
     showRouteMilepostPreview(geojson, duration = 0) {
         const srcId = this._nextId('temp');
         this.map.addSource(srcId, { type: 'geojson', data: geojson });
@@ -3249,6 +3327,9 @@ class MapManager {
     _removeTempFeature(entry) {
         for (const lid of entry.layerIds) { if (this.map?.getLayer(lid)) this.map.removeLayer(lid); }
         if (this.map?.getSource(entry.srcId)) this.map.removeSource(entry.srcId);
+        for (const sid of entry.extraSourceIds || []) {
+            if (this.map?.getSource(sid)) this.map.removeSource(sid);
+        }
         this._tempLayers = this._tempLayers.filter(e => e !== entry);
     }
 

@@ -36,6 +36,7 @@ export function WirelessSitePlanningDialog({
     unitOptions = [],
     closeWidget,
     onCancel,
+    onCleanup,
     onValidateLocations,
     onStartDrawClientPoints,
     onStartDrawPolePoints,
@@ -50,12 +51,15 @@ export function WirelessSitePlanningDialog({
     const containerRef = useRef(null);
     activeToolRef.current = activeTool;
 
+    useEffect(() => () => onCleanup?.(), [onCleanup]);
+
     useEffect(() => {
         const overlay = containerRef.current?.closest('.modal-overlay');
         if (!overlay) return undefined;
 
         overlay._interceptClose = () => {
             if (activeToolRef.current) {
+                onCleanup?.();
                 setActiveTool(null);
                 return true;
             }
@@ -65,7 +69,7 @@ export function WirelessSitePlanningDialog({
         return () => {
             delete overlay._interceptClose;
         };
-    }, []);
+    }, [onCleanup]);
 
     return (
         <div ref={containerRef}>

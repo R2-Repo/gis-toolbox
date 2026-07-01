@@ -4,6 +4,7 @@
 import { analyzeSchema, analyzeTableSchema } from './data-model.js';
 import { resolveLayerIdConflict } from './project-kit.js';
 import { importWorkspaceLayerBundle } from '../workspace/workspace-store.js';
+import { isCoverageRasterLayer, rehydrateCoverageRasters } from './coverage-raster-layer.js';
 
 /**
  * Build a live dataset object from a persisted layer record.
@@ -12,6 +13,7 @@ import { importWorkspaceLayerBundle } from '../workspace/workspace-store.js';
  *   spatial?: object,
  *   tableRows?: object[],
  *   workspaceBundle?: object,
+ *   rasterSidecar?: { manifest: object[], pngBlobsByFile: Record<string, Blob> },
  *   importWorkspaceLayerBundle?: typeof importWorkspaceLayerBundle,
  *   newLayerId?: string
  * }} [payload]
@@ -45,13 +47,31 @@ export async function buildDatasetFromSavedLayer(saved, payload = {}) {
 
     if (saved.type === 'spatial' && payload.spatial) {
         const schema = analyzeSchema(payload.spatial);
+        let source = saved.source || { file: saved.name, format: 'toolbox-kit' };
+
+        if (isCoverageRasterLayer({ source })) {
+            if (payload.rasterSidecar?.manifest?.length) {
+                const coverageRasters = await rehydrateCoverageRasters(
+                    payload.rasterSidecar.manifest,
+                    payload.rasterSidecar.pngBlobsByFile || {}
+                );
+                source = {
+                    ...source,
+                    coverageType: 'raster',
+                    coverageRasters
+                };
+            } else if (source.coverageRasters?.some((r) => r.dataUrl)) {
+                source = { ...source };
+            }
+        }
+
         return {
             id: layerId,
             name: saved.name,
             type: 'spatial',
             geojson: payload.spatial,
             schema,
-            source: saved.source || { file: saved.name, format: 'toolbox-kit' },
+            source,
             visible: saved.visible !== false,
             active: false,
             created: saved.created || new Date().toISOString(),
@@ -144,6 +164,7 @@ export async function prepareLayersFromKitSection(options) {
             spatial: layersSection.spatial?.[saved.id],
             tableRows: layersSection.tables?.[saved.id],
             workspaceBundle: layersSection.workspace?.[saved.id],
+            rasterSidecar: layersSection.rasters?.[saved.id],
             importWorkspaceLayerBundle: importWorkspace
         });
 
