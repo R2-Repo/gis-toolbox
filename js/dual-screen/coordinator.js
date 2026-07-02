@@ -2,6 +2,7 @@
  * Dual Screen Mode — primary-window lifecycle & sync orchestration
  */
 import { getLayers, getActiveLayer } from '../core/state.js';
+import { isSpatialLayer, isWorkspaceLayer } from '../core/data-model.js';
 import mapService from '../map/map-service.js';
 import { DualScreenChannel } from './channel.js';
 import {
@@ -261,28 +262,50 @@ class DualScreenCoordinator {
         if (placeholder) placeholder.remove();
         container.classList.remove('dual-screen-map-hidden');
 
+        const applyRestoredLayers = () => {
+            const allLayers = getLayers();
+            const mapLayers = allLayers.filter(isSpatialLayer);
+            const restoredIds = [];
+            for (const layer of mapLayers) {
+                const layerIdx = allLayers.indexOf(layer);
+                try {
+                    if (isWorkspaceLayer(layer)) {
+                        restoredIds.push(layer.id);
+                        void mapService.addWorkspaceLayer(layer, layerIdx, { fit: false });
+                    } else if (layer.geojson) {
+                        restoredIds.push(layer.id);
+                        mapService.addLayer(layer, layerIdx, { fit: false });
+                    }
+                } catch (err) {
+                    console.warn('[DualScreen] restore layer failed', layer.id, err);
+                }
+            }
+
+            const map = mapService.getMap();
+            if (this._lastViewport && map) {
+                map.jumpTo({
+                    center: this._lastViewport.center,
+                    zoom: this._lastViewport.zoom,
+                    bearing: this._lastViewport.bearing,
+                    pitch: this._lastViewport.pitch
+                });
+            } else if (restoredIds.length) {
+                mapService.fitToAll();
+            }
+
+            scheduleMapResizeAfterLayout(mapService);
+        };
+
         if (!mapService.getMap()) {
             mapService.init('map-container');
         }
 
-        const layers = getLayers().filter(l => l.type === 'spatial' && l.geojson);
-        layers.forEach((layer, i) => {
-            mapService.addLayer(layer, i, { fit: false });
-        });
-
         const map = mapService.getMap();
-        if (this._lastViewport && map) {
-            map.jumpTo({
-                center: this._lastViewport.center,
-                zoom: this._lastViewport.zoom,
-                bearing: this._lastViewport.bearing,
-                pitch: this._lastViewport.pitch
-            });
-        } else if (layers.length) {
-            mapService.fitToAll();
+        if (map && typeof map.loaded === 'function' && !map.loaded()) {
+            map.once('load', applyRestoredLayers);
+            return;
         }
-
-        scheduleMapResizeAfterLayout(mapService);
+        applyRestoredLayers();
     }
 
     _applyMapChrome(payload) {
@@ -360,8 +383,9 @@ class DualScreenCoordinator {
     sendSnapshot() {
         if (!this._channel || !this._secondaryReady) return;
         const layers = getLayers();
+        const spatialLayers = layers.filter(isSpatialLayer);
         const payload = buildSnapshotPayload({
-            layers: layers.filter(l => l.type === 'spatial'),
+            layers: spatialLayers,
             viewport: this._lastViewport,
             basemap: mapService.getCurrentBasemap() || 'voyager',
             is3d: mapService.is3DEnabled(),
