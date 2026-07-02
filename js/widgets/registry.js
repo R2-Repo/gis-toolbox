@@ -64,14 +64,6 @@ export const GIS_WIDGETS = [
         icon: '🔗',
         tip: 'Compare two layers using location and fuzzy name matching; review and export matched and unmatched results.',
         open: openLayerMatchAssistant
-    },
-    {
-        type: 'query',
-        action: 'openQuery',
-        label: 'Query Features',
-        icon: '🔍',
-        tip: 'Find features by attribute values and highlight, zoom, or select results on the map.',
-        open: openQuery
     }
 ];
 
@@ -80,6 +72,14 @@ export const GIS_WIDGETS = [
  * @type {typeof GIS_WIDGETS}
  */
 export const GIS_WIDGETS_HIDDEN = [
+    {
+        type: 'query',
+        action: 'openQuery',
+        label: 'Query Features',
+        icon: '🔍',
+        tip: 'Find features by attribute values and highlight, zoom, or select results on the map.',
+        open: openQuery
+    },
     {
         type: 'crs-manager',
         action: 'openCrsManager',
