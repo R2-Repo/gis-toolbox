@@ -72,6 +72,21 @@ export const GIS_WIDGETS = [
         icon: '🔍',
         tip: 'Find features by attribute values and highlight, zoom, or select results on the map.',
         open: openQuery
+    }
+];
+
+/**
+ * Implemented but not shown in the UI. See docs/CRS_MANAGER.md.
+ * @type {typeof GIS_WIDGETS}
+ */
+export const GIS_WIDGETS_HIDDEN = [
+    {
+        type: 'crs-manager',
+        action: 'openCrsManager',
+        label: 'CRS Manager',
+        icon: '🌐',
+        tip: 'Audit layer coordinate systems, batch reproject to WGS 84, register custom WKT.',
+        open: openCrsManager
     },
     {
         type: 'wireless-site-planning',
@@ -88,21 +103,6 @@ export const GIS_WIDGETS = [
         icon: '🔌',
         tip: 'Estimate OTDR distance, fiber slack, and map distance along line routes.',
         open: openFiberSlackOtdrHelper
-    }
-];
-
-/**
- * Implemented but not shown in the UI. See docs/CRS_MANAGER.md.
- * @type {typeof GIS_WIDGETS}
- */
-export const GIS_WIDGETS_HIDDEN = [
-    {
-        type: 'crs-manager',
-        action: 'openCrsManager',
-        label: 'CRS Manager',
-        icon: '🌐',
-        tip: 'Audit layer coordinate systems, batch reproject to WGS 84, register custom WKT.',
-        open: openCrsManager
     }
 ];
 
