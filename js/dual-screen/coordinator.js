@@ -2,6 +2,7 @@
  * Dual Screen Mode — primary-window lifecycle & sync orchestration
  */
 import { getLayers, getActiveLayer } from '../core/state.js';
+import bus from '../core/event-bus.js';
 import mapService from '../map/map-service.js';
 import { DualScreenChannel } from './channel.js';
 import {
@@ -282,6 +283,8 @@ class DualScreenCoordinator {
             mapService.fitToAll();
         }
 
+        mapService.reapply3DIfEnabled?.();
+
         scheduleMapResizeAfterLayout(mapService);
     }
 
@@ -298,6 +301,7 @@ class DualScreenCoordinator {
             document.querySelectorAll('#dimension-toggle .header-toggle-option').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.value === (payload.is3d ? '3d' : '2d'));
             });
+            bus.emit('map:3dChanged', !!payload.is3d);
         }
     }
 

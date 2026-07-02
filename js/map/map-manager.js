@@ -1780,6 +1780,26 @@ class MapManager {
         this._3dEnabled ? this.disable3D() : this.enable3D();
     }
 
+    /**
+     * Apply 3D visuals when _3dEnabled is already true (e.g. after map re-init).
+     * Does not change camera pitch.
+     */
+    reapply3DIfEnabled() {
+        if (!this._3dEnabled || !this.map) return;
+
+        this.map.dragRotate.enable();
+        this.map.touchZoomRotate.enableRotation();
+
+        if (!this._terrainEnabled) {
+            this._apply3D();
+        } else if (!this._buildingsEnabled) {
+            this._addBuildingsLayer();
+        }
+
+        this._setAllAnnotationMapLibreVisibility(false);
+        this._annotationOverlay?.setActive(true);
+    }
+
     /** Internal helper — adds terrain, sky, buildings without changing _3dEnabled flag */
     _apply3D() {
         if (!this.map.getSource('terrain-source')) {
@@ -1928,9 +1948,9 @@ class MapManager {
                         15, 0, 16, ['get', 'render_height']
                     ],
                     'fill-extrusion-base': [
-                        'case',
-                        ['>=', ['get', 'zoom'], 16],
-                        ['get', 'render_min_height'], 0
+                        'interpolate', ['linear'], ['zoom'],
+                        15, 0,
+                        16, ['get', 'render_min_height']
                     ]
                 }
             });
