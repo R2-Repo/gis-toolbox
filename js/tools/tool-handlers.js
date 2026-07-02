@@ -39,7 +39,6 @@ import { isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import mapService from '../map/map-service.js';
 import { isSmartStyleActive } from '../map/style-engine.js';
 import dualScreenCoordinator from '../dual-screen/coordinator.js';
-import { getMapViewContextForUi } from '../dual-screen/map-view-context.js';
 import { installDualScreenPrimaryHandlers } from '../dual-screen/primary-handlers.js';
 import {
     POPUP_BLOCKED_MESSAGE,
@@ -196,7 +195,17 @@ function _timeAgo(ts) {
 // ============================
 
 function _getMapChromeSnapshot() {
-    const { viewport } = getMapViewContextForUi(mapService, dualScreenCoordinator);
+    const map = mapService.getMap();
+    let viewport = null;
+    if (map) {
+        const center = map.getCenter();
+        viewport = {
+            center: [center.lng, center.lat],
+            zoom: map.getZoom(),
+            bearing: map.getBearing?.() ?? 0,
+            pitch: map.getPitch?.() ?? 0
+        };
+    }
     return {
         basemap: mapService.getCurrentBasemap(),
         is3d: mapService.is3DEnabled(),
@@ -578,7 +587,13 @@ export function buildMapContextMenuItems(payload) {
             icon: '🔍',
             label: 'Zoom to layer',
             action: () => {
-                zoomToLayer(layerId);
+                const ll = mapService.getLayerRecord(layerId);
+                if (ll?.geojson) {
+                    try {
+                        const bb = turf.bbox(ll.geojson);
+                        mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
+                    } catch (_) { /* ignore */ }
+                }
             }
         });
         items.push({
@@ -596,7 +611,9 @@ export function buildMapContextMenuItems(payload) {
 
 export function getRightPanelSnapshot() {
     const layer = getActiveLayer();
-    const { zoom: mapZoom, latitude: mapLatitude } = getMapViewContextForUi(mapService, dualScreenCoordinator);
+    const map = mapService.getMap();
+    const mapZoom = map?.getZoom?.() ?? 7;
+    const mapLatitude = map?.getCenter?.()?.lat ?? 0;
 
     if (!layer) {
         return {
@@ -644,7 +661,16 @@ export function handleLayerScaleRangeChange(layerId, range) {
     };
     updateLayer(layerId, patch);
 
-    const { latitude } = getMapViewContextForUi(mapService, dualScreenCoordinator);
+    let latitude = 0;
+    if (dualScreenCoordinator.isActive) {
+        const bounds = dualScreenCoordinator.getBounds();
+        if (bounds) {
+            latitude = (bounds.getSouth() + bounds.getNorth()) / 2;
+        }
+    } else {
+        const map = mapService.getMap();
+        latitude = map?.getCenter?.()?.lat ?? 0;
+    }
     mapService.setLayerScaleRange(layerId, patch, latitude);
     refreshUI();
 }
@@ -801,10 +827,6 @@ async function _addImportedDatasets(datasets, importOpts = {}) {
             mapService.addLayer(ds, layerIdx, { fit: false });
         }
         ids.push(ds.id);
-    }
-
-    if (dualScreenCoordinator.isActive) {
-        dualScreenCoordinator.syncLayersChanged();
     }
 
     const crsWarnings = datasets.filter((ds) => isSpatialLayer(ds) && !isLayerDisplayReady(ds));
@@ -1489,7 +1511,17 @@ function setupDualScreenMode() {
             refreshUI();
         },
         zoomToLayer: (layerId) => {
-            zoomToLayer(layerId);
+            if (dualScreenCoordinator.isActive) {
+                dualScreenCoordinator.broadcastFit('fitLayers', { layerIds: [layerId] });
+                return;
+            }
+            const layer = mapService.getLayerRecord(layerId);
+            if (layer?.geojson) {
+                try {
+                    const bb = turf.bbox(layer.geojson);
+                    mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
+                } catch (_) { /* ignore */ }
+            }
         },
         setActiveLayer: (id) => { setActiveLayer(id); refreshUI(); },
         onCoordSearchAddNew: _coordSearchAddNew,
@@ -1590,9 +1622,13 @@ export function toggleLayerVisibilityAndRender(id) {
 }
 
 export function zoomToLayer(id) {
-    const layer = getLayers().find((l) => l.id === id);
-    if (!layer?.geojson?.features?.length && !isWorkspaceLayer(layer)) return;
-    mapService.fitToLayers([id]);
+    const layer = mapService.getLayerRecord(id);
+    if (layer && layer.geojson) {
+        try {
+            const bb = turf.bbox(layer.geojson);
+            mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
+        } catch (_) {}
+    }
 }
 
 export async function removeLayerWithConfirm(id) {

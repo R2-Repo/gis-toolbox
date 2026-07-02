@@ -280,18 +280,6 @@ Re-export shims at `js/widgets/` root (`*-engine.js`) are for old import paths o
 
 ---
 
-## Dual screen checklist (new widgets)
-
-When a widget uses map picks, previews, selection, or zoom:
-
-1. Read [`docs/DUAL_SCREEN_MODE.md`](DUAL_SCREEN_MODE.md).
-2. Wire map effects only through `ctx.mapService` — never `getMap()`.
-3. Use `openReactIsland` / `docked: true` so the modal repositions when dual screen toggles.
-4. If you add a new `mapService` method that touches the map canvas, extend [`js/dual-screen/dual-screen-map-service.js`](../js/dual-screen/dual-screen-map-service.js) and mirror it in [`js/map-window.js`](../js/map-window.js) (`MAP_CMD` or `MAP_RPC`).
-5. Smoke test: run the widget in single screen, dual screen, and after toggling back.
-
----
-
 ## Suggested reading order
 
 1. **This playbook** — scope and file map
@@ -317,6 +305,5 @@ npm test             # Vitest (no tests/ folder yet — will no-op or fail until
 ## Related docs
 
 - [`WIDGET_AUTHORING.md`](WIDGET_AUTHORING.md) — step-by-step authoring checklist
-- [`DUAL_SCREEN_MODE.md`](DUAL_SCREEN_MODE.md) — dual screen architecture and smoke checklist
 - [`AGENTS.md`](../AGENTS.md) — agent guide + git workflow
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — local setup and deployment

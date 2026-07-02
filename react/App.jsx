@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import logger from '../js/core/logger.js';
-import bus from '../js/core/event-bus.js';
 import mapService from '../js/map/map-service.js';
 import { setExportMapManager } from '../js/export/exporter.js';
 import sessionStore from '../js/core/session-store.js';
 import { getState, setUIState } from '../js/core/state.js';
 import { installDualScreenMapServiceDecorator } from '../js/dual-screen/dual-screen-map-service.js';
 import dualScreenCoordinator from '../js/dual-screen/coordinator.js';
-import { getMapViewContextForUi } from '../js/dual-screen/map-view-context.js';
 import {
     restoreSessionIfAvailable,
     setupAppWiring,
@@ -117,13 +115,6 @@ function AppShell() {
     const leftPanel = usePanelCollapse('left');
     const rightPanel = usePanelCollapse('right');
 
-    useEffect(() => {
-        setDimension(mapService.is3DEnabled() ? '3d' : '2d');
-        const on3dChanged = (is3D) => setDimension(is3D ? '3d' : '2d');
-        bus.on('map:3dChanged', on3dChanged);
-        return () => bus.off('map:3dChanged', on3dChanged);
-    }, []);
-
     const panelActions = useMemo(() => ({
         setActiveLayer: setActiveLayerAndRefresh,
         renameLayer: (id) => renameLayer(id),
@@ -145,7 +136,9 @@ function AppShell() {
     const fields = activeLayer?.schema?.fields || [];
 
     const layersForPanel = useMemo(() => {
-        const { zoom, latitude: lat } = getMapViewContextForUi(mapService, dualScreenCoordinator);
+        const map = mapService.getMap();
+        const zoom = map?.getZoom?.() ?? 7;
+        const lat = map?.getCenter?.()?.lat ?? 0;
         return layers.map((layer) => ({
             ...layer,
             _outOfScaleRange: layer.visible !== false

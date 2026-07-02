@@ -214,19 +214,7 @@ function onMapReady() {
 }
 
 function applyMapCmd(payload) {
-    const {
-        action,
-        geojson,
-        duration,
-        options,
-        layerId,
-        indices,
-        range,
-        latitude,
-        style,
-        dataset,
-        colorIndex
-    } = payload || {};
+    const { action, geojson, duration, layerId, range, latitude, style, dataset } = payload || {};
     switch (action) {
         case 'showTempFeature':
             mapService.showTempFeature(geojson, duration ?? 10000);
@@ -235,7 +223,7 @@ function applyMapCmd(payload) {
             mapService.showRouteMilepostPreview?.(geojson, duration ?? 0);
             break;
         case 'showWirelessPlanningPreview':
-            mapService.showWirelessPlanningPreview?.(geojson, options ?? duration ?? 0);
+            mapService.showWirelessPlanningPreview?.(geojson, duration ?? 0);
             break;
         case 'showProjectStationingPreview':
             mapService.showProjectStationingPreview?.(geojson, duration ?? 0);
@@ -243,48 +231,9 @@ function applyMapCmd(payload) {
         case 'clearTempFeatures':
             mapService.clearTempFeatures?.();
             break;
-        case 'popTempFeature':
-            mapService.popTempFeature?.();
-            break;
         case 'cancelInteraction':
             mapService.cancelInteraction?.();
             break;
-        case 'showQueryResults':
-            if (layerId) mapService.showQueryResults?.(layerId, indices ?? []);
-            break;
-        case 'clearQueryResults':
-            mapService.clearQueryResults?.();
-            break;
-        case 'fitToFeatureIndices':
-            if (layerId) {
-                mapService.fitToFeatureIndices?.(layerId, indices ?? [], options || {});
-            }
-            break;
-        case 'pulseQueryResults':
-            mapService.pulseQueryResults?.(options || {});
-            break;
-        case 'addCoverageHeatmapLayer': {
-            const layer = entryToDataset(dataset);
-            if (layer) {
-                mapService.addCoverageHeatmapLayer?.(
-                    layer,
-                    colorIndex ?? 0,
-                    payload.options || {}
-                );
-            }
-            break;
-        }
-        case 'addWorkspaceLayer': {
-            const layer = entryToDataset(dataset);
-            if (layer) {
-                void mapService.addWorkspaceLayer(
-                    layer,
-                    colorIndex ?? 0,
-                    payload.options || {}
-                );
-            }
-            break;
-        }
         case 'setLayerScaleRange': {
             const map = mapService.getMap();
             if (!layerId || !range || !map) break;
@@ -308,14 +257,6 @@ function applyMapCmd(payload) {
 async function handleMapRpc(payload, postFn) {
     const { requestId, method, args = [] } = payload || {};
     try {
-        if (method === 'startContinuousPointPick') {
-            const prompt = args[0] ?? 'Click the map to add points (Esc or Cancel when done)';
-            await mapService.startContinuousPointPick(prompt, (coord) => {
-                postFn(MessageType.MAP_PICK_POINT, { requestId, coord });
-            });
-            postFn(MessageType.MAP_RPC_RESULT, { requestId, result: null });
-            return;
-        }
         const fn = mapService[method];
         if (typeof fn !== 'function') {
             throw new Error(`Unknown map method: ${method}`);
