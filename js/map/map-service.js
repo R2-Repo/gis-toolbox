@@ -287,6 +287,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         clearTempFeatures() {
             return mapAdapter.clearTempFeatures?.();
         },
+        popTempFeature() {
+            return mapAdapter.popTempFeature?.();
+        },
         hasPopupHits() {
             return Array.isArray(mapAdapter._popupHits) && mapAdapter._popupHits.length > 0;
         },

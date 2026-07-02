@@ -28,6 +28,7 @@ export const MessageType = {
     TOAST: 'TOAST',
     MAP_RPC: 'MAP_RPC',
     MAP_RPC_RESULT: 'MAP_RPC_RESULT',
+    MAP_PICK_POINT: 'MAP_PICK_POINT',
     MAP_CMD: 'MAP_CMD',
     BYE: 'BYE',
     PING: 'PING',

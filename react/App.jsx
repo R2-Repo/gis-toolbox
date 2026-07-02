@@ -7,6 +7,7 @@ import sessionStore from '../js/core/session-store.js';
 import { getState, setUIState } from '../js/core/state.js';
 import { installDualScreenMapServiceDecorator } from '../js/dual-screen/dual-screen-map-service.js';
 import dualScreenCoordinator from '../js/dual-screen/coordinator.js';
+import { getMapViewContextForUi } from '../js/dual-screen/map-view-context.js';
 import {
     restoreSessionIfAvailable,
     setupAppWiring,
@@ -144,9 +145,7 @@ function AppShell() {
     const fields = activeLayer?.schema?.fields || [];
 
     const layersForPanel = useMemo(() => {
-        const map = mapService.getMap();
-        const zoom = map?.getZoom?.() ?? 7;
-        const lat = map?.getCenter?.()?.lat ?? 0;
+        const { zoom, latitude: lat } = getMapViewContextForUi(mapService, dualScreenCoordinator);
         return layers.map((layer) => ({
             ...layer,
             _outOfScaleRange: layer.visible !== false

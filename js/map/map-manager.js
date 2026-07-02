@@ -2980,6 +2980,11 @@ class MapManager {
         }
     }
 
+    popTempFeature() {
+        const entry = this._tempLayers[this._tempLayers.length - 1];
+        if (entry) this._removeTempFeature(entry);
+    }
+
     /**
      * Wireless site planning preview: coverage rasters, pattern outline, blue square clients, red poles.
      * _preview: draw_client | covered | uncovered | draw_pole | pole | unused_pole | pattern_outline | antenna_indicator | assignment.

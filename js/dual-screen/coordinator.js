@@ -17,6 +17,7 @@ import { setDualScreenActiveHint } from './storage-hint.js';
 import { scheduleMapResizeAfterLayout, syncDualScreenPrimaryUi } from './layout.js';
 import {
     applySelectionPayload,
+    buildSelectionPayload,
     installPrimarySelectionSync,
     shouldApplySelection
 } from './selection-sync.js';
@@ -54,6 +55,10 @@ class DualScreenCoordinator {
         this._rpcSeq = 0;
         /** @type {Map<string, { resolve: Function, reject: Function, timeout: ReturnType<typeof setTimeout> }>} */
         this._rpcPending = new Map();
+        /** @type {Map<string, { onPoint: Function }>} */
+        this._continuousPickPending = new Map();
+        /** @type {object | null} */
+        this._pendingSelectionPayload = null;
     }
 
     setFenceBbox(bbox) {
@@ -99,6 +104,7 @@ class DualScreenCoordinator {
     _abortPendingActivation() {
         this._clearActivateTimeout();
         this._pendingActivation = false;
+        mapService.cancelInteraction?.();
         if (this._channel) {
             this._channel.post(createMessage('primary', MessageType.BYE, {}));
             this._channel.close();
@@ -153,6 +159,10 @@ class DualScreenCoordinator {
         // Tear down primary map before isActive — getMap() returns null once dual-screen is active.
         if (mapService.getMap()) {
             this._lastViewport = this._captureViewport();
+            const totalSelection = mapService.getTotalSelectionCount?.() ?? 0;
+            if (totalSelection > 0) {
+                this._pendingSelectionPayload = buildSelectionPayload('primary', mapService, {});
+            }
             mapService.destroy();
         }
 
@@ -190,6 +200,8 @@ class DualScreenCoordinator {
             this._selectionSyncTeardown?.();
             this._selectionSyncTeardown = null;
 
+            mapService.cancelInteraction?.();
+
             if (!options.fromSecondaryBye) {
                 if (this._channel) {
                     this._channel.post(createMessage('primary', MessageType.BYE, {}));
@@ -209,6 +221,7 @@ class DualScreenCoordinator {
             this._secondaryReady = false;
             this._lastBounds = null;
             this._rejectAllMapRpc('Dual screen deactivated');
+            this._continuousPickPending.clear();
             setDualScreenActiveHint(typeof sessionStorage !== 'undefined' ? sessionStorage : null, false);
 
             // Restore normal 3-panel layout before MapLibre init so canvas size is correct.
@@ -286,6 +299,17 @@ class DualScreenCoordinator {
         mapService.reapply3DIfEnabled?.();
 
         scheduleMapResizeAfterLayout(mapService);
+        this._restoreSelectionHighlights();
+    }
+
+    _restoreSelectionHighlights() {
+        for (const layer of getLayers()) {
+            if (layer.type !== 'spatial') continue;
+            const indices = mapService.getSelectedIndices?.(layer.id) ?? [];
+            if (indices.length) {
+                mapService.selectFeatures?.(layer.id, indices);
+            }
+        }
     }
 
     _applyMapChrome(payload) {
@@ -353,6 +377,9 @@ class DualScreenCoordinator {
             case MessageType.MAP_RPC_RESULT:
                 this._resolveMapRpcResult(msg.payload);
                 break;
+            case MessageType.MAP_PICK_POINT:
+                this._handleMapPickPoint(msg.payload);
+                break;
             case MessageType.BYE:
                 this.deactivate({ fromSecondaryBye: true });
                 break;
@@ -373,6 +400,10 @@ class DualScreenCoordinator {
             activeLayerId: getActiveLayer()?.id ?? null
         });
         this._channel.post(createMessage('primary', MessageType.SNAPSHOT, payload));
+        if (this._pendingSelectionPayload) {
+            this.broadcastSelection(this._pendingSelectionPayload);
+            this._pendingSelectionPayload = null;
+        }
     }
 
     syncLayersChanged() {
@@ -465,6 +496,7 @@ class DualScreenCoordinator {
             const timeout = setTimeout(() => {
                 if (!this._rpcPending.has(requestId)) return;
                 this._rpcPending.delete(requestId);
+                this._continuousPickPending.delete(requestId);
                 reject(new Error(`Map interaction timed out (${method})`));
             }, options.timeoutMs ?? 600000);
 
@@ -478,6 +510,49 @@ class DualScreenCoordinator {
         });
     }
 
+    /**
+     * Stream map clicks from secondary during continuous point pick.
+     * @param {string} prompt
+     * @param {(coord: number[]) => void | Promise<void>} onPoint
+     */
+    invokeContinuousPointPick(prompt, onPoint) {
+        if (!this.isActive || !this._channel) {
+            return Promise.reject(new Error('Dual screen map is not active'));
+        }
+        return new Promise((resolve, reject) => {
+            const requestId = `rpc-${Date.now()}-${++this._rpcSeq}`;
+            const timeout = setTimeout(() => {
+                if (!this._rpcPending.has(requestId)) return;
+                this._rpcPending.delete(requestId);
+                this._continuousPickPending.delete(requestId);
+                reject(new Error('Map interaction timed out (startContinuousPointPick)'));
+            }, 600000);
+
+            this._rpcPending.set(requestId, { resolve, reject, timeout });
+            this._continuousPickPending.set(requestId, { onPoint });
+            this.focusMapWindow();
+            this._channel.post(createMessage('primary', MessageType.MAP_RPC, {
+                requestId,
+                method: 'startContinuousPointPick',
+                args: serializeMapRpcArgs([prompt])
+            }));
+        });
+    }
+
+    _handleMapPickPoint(payload) {
+        const { requestId, coord } = payload || {};
+        if (!requestId || !coord) return;
+        const pending = this._continuousPickPending.get(requestId);
+        if (!pending?.onPoint) return;
+        try {
+            Promise.resolve(pending.onPoint(coord)).catch((err) => {
+                console.warn('[DualScreen] continuous pick onPoint failed', err);
+            });
+        } catch (err) {
+            console.warn('[DualScreen] continuous pick onPoint failed', err);
+        }
+    }
+
     broadcastMapCmd(action, data = {}) {
         if (!this._channel) return;
         if (this.isActive) this.focusMapWindow();
@@ -489,6 +564,7 @@ class DualScreenCoordinator {
         if (!pending) return;
         clearTimeout(pending.timeout);
         this._rpcPending.delete(payload.requestId);
+        this._continuousPickPending.delete(payload.requestId);
         if (payload.error) pending.reject(new Error(payload.error));
         else pending.resolve(payload.result);
     }
@@ -499,6 +575,7 @@ class DualScreenCoordinator {
             pending.reject(new Error(reason));
             this._rpcPending.delete(requestId);
         }
+        this._continuousPickPending.clear();
     }
 
     _applyRemoteSelection(payload) {
