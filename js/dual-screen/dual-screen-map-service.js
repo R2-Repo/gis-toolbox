@@ -69,7 +69,17 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         showProjectStationingPreview: mapApi.showProjectStationingPreview?.bind(mapApi),
         removeTempFeature: mapApi.removeTempFeature?.bind(mapApi),
         clearTempFeatures: mapApi.clearTempFeatures?.bind(mapApi),
-        cancelInteraction: mapApi.cancelInteraction?.bind(mapApi)
+        cancelInteraction: mapApi.cancelInteraction?.bind(mapApi),
+        addWorkspaceLayer: mapApi.addWorkspaceLayer?.bind(mapApi),
+        addLayerIncremental: mapApi.addLayerIncremental?.bind(mapApi)
+    };
+
+    const relayLayerAdd = (dataset, colorIndex = 0, options = {}) => {
+        if (options.style) originals.setLayerStyle?.(dataset.id, options.style);
+        coordinator.broadcastLayerAdd(dataset, colorIndex, options);
+        if (options.fit && dataset?.id) {
+            coordinator.broadcastFit('fitLayers', { layerIds: [dataset.id] });
+        }
     };
 
     ASYNC_MAP_RPC_METHODS.forEach((method) => {
@@ -83,11 +93,19 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
 
     mapApi.addLayer = function addLayer(dataset, colorIndex = 0, options = {}) {
         if (!coordinator.isActive) return originals.addLayer?.(dataset, colorIndex, options);
-        if (options.style) originals.setLayerStyle?.(dataset.id, options.style);
-        coordinator.broadcastLayerAdd(dataset, colorIndex, options);
-        if (options.fit && dataset?.id) {
-            coordinator.broadcastFit('fitLayers', { layerIds: [dataset.id] });
-        }
+        relayLayerAdd(dataset, colorIndex, options);
+        return undefined;
+    };
+
+    mapApi.addWorkspaceLayer = async function addWorkspaceLayer(dataset, colorIndex = 0, options = {}) {
+        if (!coordinator.isActive) return originals.addWorkspaceLayer?.(dataset, colorIndex, options);
+        relayLayerAdd(dataset, colorIndex, options);
+        return undefined;
+    };
+
+    mapApi.addLayerIncremental = async function addLayerIncremental(dataset, colorIndex = 0, options = {}) {
+        if (!coordinator.isActive) return originals.addLayerIncremental?.(dataset, colorIndex, options);
+        relayLayerAdd(dataset, colorIndex, options);
         return undefined;
     };
 
