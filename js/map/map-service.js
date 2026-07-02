@@ -76,31 +76,8 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
             return !!mapAdapter._3dEnabled;
         },
         set3DEnabled(enabled) {
-            const want = !!enabled;
-            const hasMap = !!mapAdapter.getMap?.();
-            const current = !!mapAdapter._3dEnabled;
-
-            if (want === current) {
-                if (want && hasMap) {
-                    mapAdapter.reapply3DIfEnabled?.();
-                }
-                return want;
-            }
-
-            if (hasMap) {
-                if (want) {
-                    mapAdapter.enable3D();
-                    return true;
-                }
-                mapAdapter.disable3D();
-                return false;
-            }
-
-            mapAdapter._3dEnabled = want;
-            return want;
-        },
-        reapply3DIfEnabled() {
-            return mapAdapter.reapply3DIfEnabled?.();
+            mapAdapter._3dEnabled = !!enabled;
+            return !!mapAdapter._3dEnabled;
         },
         getLayerStyles() {
             return mapAdapter._layerStyles;
@@ -286,9 +263,6 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         clearTempFeatures() {
             return mapAdapter.clearTempFeatures?.();
-        },
-        popTempFeature() {
-            return mapAdapter.popTempFeature?.();
         },
         hasPopupHits() {
             return Array.isArray(mapAdapter._popupHits) && mapAdapter._popupHits.length > 0;
