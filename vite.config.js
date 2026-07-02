@@ -33,6 +33,14 @@ function createManualChunks(id) {
   if (!id) return undefined;
 
   if (inPath(id, 'node_modules')) {
+    // Keep React isolated so app-domain ↔ vendor circular imports cannot break jsx-runtime init.
+    if (
+      inPath(id, 'react-dom') || inPath(id, 'react/') ||
+      /[\\/]node_modules[\\/]react[\\/]/.test(id) ||
+      inPath(id, 'scheduler')
+    ) {
+      return 'react-vendor';
+    }
     return 'vendor';
   }
 
