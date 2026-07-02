@@ -9,7 +9,7 @@ This project uses a **local-first, two-branch** workflow. There are no feature b
 │  1. Edit locally on staging (Cursor, editor, etc.)      │
 │  2. Commit on staging via GitHub Desktop                │
 │  3. Push staging → preview site updates                 │
-│  4. Merge staging → main in GitHub Desktop → production │
+│  4. Promote staging → main (GitHub Actions button)      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -25,7 +25,7 @@ This project uses a **local-first, two-branch** workflow. There are no feature b
 
 - Production release branch only
 - **Do not develop on `main`**
-- Merge from `staging` in GitHub Desktop when ready to release
+- Promote from `staging` via the **Promote to Production** GitHub Actions workflow when ready to release
 
 ## What we do NOT use
 
@@ -47,9 +47,12 @@ This project uses a **local-first, two-branch** workflow. There are no feature b
 ### Releasing to production
 
 1. Ensure `staging` is pushed and tested on the preview site
-2. In GitHub Desktop, merge `staging` into `main`
-3. Push `main` to origin
-4. Production site updates automatically
+2. On GitHub.com, open **Actions → Promote to Production → Run workflow**
+3. Type `promote` in the confirmation field and run the workflow
+4. The workflow runs tests on `staging`, merges `staging` into `main`, and pushes `main`
+5. The **Deploy Pages** workflow runs automatically and production updates
+
+You do not need to switch to or merge `main` locally.
 
 ## AI agents (Cursor)
 
@@ -77,12 +80,13 @@ Full agent instructions: [AGENTS.md](../AGENTS.md)
 
 ## Deployment
 
-Workflow: `.github/workflows/deploy-pages.yml`
+Workflows:
 
-| Trigger | Result |
-|---------|--------|
-| Push to `staging` | Staging preview built and deployed |
-| Push to `main` | Production site built and deployed |
+| Workflow | Trigger | Result |
+|----------|---------|--------|
+| `deploy-pages.yml` | Push to `staging` | Staging preview built and deployed |
+| `deploy-pages.yml` | Push to `main` | Production site built and deployed |
+| `promote-staging.yml` | Manual (Actions button) | Tests `staging`, merges into `main`, pushes `main` |
 
 No manual deploy step is required.
 
