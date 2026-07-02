@@ -1,4 +1,6 @@
 import { PipelineIcon } from '../ui/PipelineIcon.jsx';
+import { SelectionBar } from '../map/SelectionBar.jsx';
+import { MapPrintMenu } from './MapPrintMenu.jsx';
 
 const faviconUrl = `${import.meta.env.BASE_URL}icons/favicon.png`;
 
@@ -7,11 +9,14 @@ export function HeaderBar({
     onUndo,
     onRedo,
     onMergeLayers,
-    onWorkflow,
     onBasemapChange,
     onDimensionChange,
     onLogs,
     onInfo,
+    onExportMapView,
+    getActiveLayer,
+    getSelectionCount,
+    onDeleteSelected,
     canUndo = false,
     canRedo = false,
     showMerge = false,
@@ -37,10 +42,15 @@ export function HeaderBar({
                 <div className="header-tool-actions">
                 <button className="btn btn-ghost btn-sm" id="btn-undo" disabled={!canUndo} title="Undo" onClick={() => onUndo?.()}>↩</button>
                 <button className="btn btn-ghost btn-sm" id="btn-redo" disabled={!canRedo} title="Redo" onClick={() => onRedo?.()}>↪</button>
+                <SelectionBar
+                    getActiveLayer={getActiveLayer}
+                    getSelectionCount={getSelectionCount}
+                    onDeleteSelected={onDeleteSelected}
+                />
                 <button className={`btn btn-secondary btn-sm${showMerge ? '' : ' hidden'}`} id="btn-merge" onClick={() => onMergeLayers?.()}>Merge Layers</button>
                 <div className="header-sep"></div>
                 <div className="header-pipeline-cluster">
-                    <button className="btn btn-secondary btn-sm" id="btn-workflow" title="Data Pipeline Editor" onClick={() => onWorkflow?.()}>
+                    <button type="button" className="btn btn-secondary btn-sm" id="btn-workflow" title="Data Pipeline Editor">
                         <span className="btn-icon-text" aria-hidden="true">
                             <PipelineIcon className="btn-icon-svg" size={14} />
                         </span>
@@ -64,6 +74,7 @@ export function HeaderBar({
                     <button className={`header-toggle-option${dimension === '2d' ? ' active' : ''}`} data-value="2d" onClick={() => onDimensionChange?.('2d')}>2D</button>
                     <button className={`header-toggle-option${dimension === '3d' ? ' active' : ''}`} data-value="3d" onClick={() => onDimensionChange?.('3d')}>3D</button>
                 </div>
+                <MapPrintMenu onExportMapView={onExportMapView} />
                 <button className="btn btn-ghost btn-sm" id="btn-logs" title="Logs" onClick={() => onLogs?.()}>📋</button>
                 <button
                     className="btn btn-ghost"

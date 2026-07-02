@@ -1,0 +1,19 @@
+---
+description: GIS Widget work — read WIDGET_AGENT_PLAYBOOK.md first when adding or changing panel widgets
+alwaysApply: true
+---
+
+# GIS Widget authoring
+
+When the user asks to **build, add, plan, or change a GIS Widget** (left-panel multi-step wizard under `js/widgets/`):
+
+1. **Read first:** [`docs/WIDGET_AGENT_PLAYBOOK.md`](../../docs/WIDGET_AGENT_PLAYBOOK.md)
+2. **Then:** [`docs/WIDGET_AUTHORING.md`](../../docs/WIDGET_AUTHORING.md) for the step-by-step checklist
+3. **Copy patterns from** the closest reference widget in `js/widgets/` (simplest: `spatial-analyzer/`)
+
+## Rules
+
+- Register only in `js/widgets/registry.js` (`GIS_WIDGETS` or `GIS_WIDGETS_HIDDEN`)
+- Wire UI through `controller.js` + `openReactIsland()` — **not** inline in `tool-handlers.js`
+- Engine logic stays pure in `engine.js`; React dialog gets callbacks via props
+- Reuse `react/widgets/shared/` (`WidgetPanelShell`, `LayerSelect`, etc.)

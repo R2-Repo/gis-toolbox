@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 export function CombineFeaturesDialog({
     selectionCount = 0,
@@ -11,24 +12,18 @@ export function CombineFeaturesDialog({
     const [applyTo, setApplyTo] = useState(selectionCount > 0 ? 'selection' : 'layer');
 
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onCombine?.({ applyTo })}
+            runLabel="Combine"
+            disabled={!isApplyToValid(applyTo, selectionCount)}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
                 layerName={layerName}
                 onChange={setApplyTo}
             />
-            <p>Merge features of the same geometry type into Multi-geometry features.</p>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!isApplyToValid(applyTo, selectionCount)}
-                    onClick={() => onCombine?.({ applyTo })}
-                >
-                    Combine
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

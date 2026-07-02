@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import logger from '../js/core/logger.js';
+import bus from '../js/core/event-bus.js';
 import mapService from '../js/map/map-service.js';
 import { setExportMapManager } from '../js/export/exporter.js';
 import sessionStore from '../js/core/session-store.js';
 import { getState, setUIState } from '../js/core/state.js';
 import { installDualScreenMapServiceDecorator } from '../js/dual-screen/dual-screen-map-service.js';
 import dualScreenCoordinator from '../js/dual-screen/coordinator.js';
+import { getMapViewContextForUi } from '../js/dual-screen/map-view-context.js';
 import {
     restoreSessionIfAvailable,
     setupAppWiring,
     setupDragDrop,
     setupLogsPanel,
-    getWorkflowOverlay,
     openImportFlow,
     handleUndo,
     handleRedo,
@@ -35,14 +36,12 @@ import {
     doExport,
     fixAGOL,
     showDataTable,
-    selectAllFeatures,
-    invertSelection,
     deleteSelectedFeatures,
-    clearSelection,
     getRightPanelSnapshot,
     handleLayerStyleChange,
     handleLayerScaleRangeChange,
     exportProjectKit,
+    exportMapView,
     buildMapContextMenuItems,
     setPanelCollapsed
 } from '../js/tools/tool-handlers.js';
@@ -118,6 +117,13 @@ function AppShell() {
     const leftPanel = usePanelCollapse('left');
     const rightPanel = usePanelCollapse('right');
 
+    useEffect(() => {
+        setDimension(mapService.is3DEnabled() ? '3d' : '2d');
+        const on3dChanged = (is3D) => setDimension(is3D ? '3d' : '2d');
+        bus.on('map:3dChanged', on3dChanged);
+        return () => bus.off('map:3dChanged', on3dChanged);
+    }, []);
+
     const panelActions = useMemo(() => ({
         setActiveLayer: setActiveLayerAndRefresh,
         renameLayer: (id) => renameLayer(id),
@@ -139,9 +145,7 @@ function AppShell() {
     const fields = activeLayer?.schema?.fields || [];
 
     const layersForPanel = useMemo(() => {
-        const map = mapService.getMap();
-        const zoom = map?.getZoom?.() ?? 7;
-        const lat = map?.getCenter?.()?.lat ?? 0;
+        const { zoom, latitude: lat } = getMapViewContextForUi(mapService, dualScreenCoordinator);
         return layers.map((layer) => ({
             ...layer,
             _outOfScaleRange: layer.visible !== false
@@ -173,11 +177,14 @@ function AppShell() {
                     onUndo={handleUndo}
                     onRedo={handleRedo}
                     onMergeLayers={handleMergeLayers}
-                    onWorkflow={() => getWorkflowOverlay()?.toggle()}
                     onBasemapChange={onBasemapChange}
                     onDimensionChange={onDimensionChange}
                     onLogs={toggleLogs}
                     onInfo={showToolInfo}
+                    onExportMapView={exportMapView}
+                    getActiveLayer={getActiveLayer}
+                    getSelectionCount={(layerId) => mapService.getSelectionCount(layerId)}
+                    onDeleteSelected={deleteSelectedFeatures}
                     canUndo={toolbar.canUndo}
                     canRedo={toolbar.canRedo}
                     showMerge={toolbar.showMerge}
@@ -222,16 +229,7 @@ function AppShell() {
                                 activeLayer={activeLayer}
                                 hasLayers={layers.length > 0}
                                 gisTools={(
-                                    <GisToolsPanel
-                                        getActiveLayer={getActiveLayer}
-                                        getSelectionCount={(layerId) => mapService.getSelectionCount(layerId)}
-                                        selectionActions={{
-                                            onSelectAll: selectAllFeatures,
-                                            onInvertSelection: invertSelection,
-                                            onDeleteSelected: deleteSelectedFeatures,
-                                            onClearSelection: clearSelection
-                                        }}
-                                    />
+                                    <GisToolsPanel />
                                 )}
                             />
                         </div>
@@ -341,7 +339,7 @@ export function App() {
     const toastHostRef = useRef(null);
     const bootRanRef = useRef(false);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         installDualScreenMapServiceDecorator(mapService, dualScreenCoordinator);
         logger.info('App', 'Initializing GIS Toolbox');
 

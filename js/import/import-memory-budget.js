@@ -9,6 +9,7 @@ const PEAK_FACTOR = {
     json: 12,
     csv: 14,
     kml: 14,
+    gpx: 14,
     xml: 14,
     zip: 16,
     kmz: 16,
@@ -45,6 +46,7 @@ function _detectFormatFromName(fileName) {
     if (ext === 'csv' || ext === 'tsv' || ext === 'txt') return 'csv';
     if (ext === 'xlsx' || ext === 'xls') return 'xlsx';
     if (ext === 'kml') return 'kml';
+    if (ext === 'gpx') return 'gpx';
     if (ext === 'kmz') return 'kmz';
     if (ext === 'zip') return 'zip';
     if (ext === 'xml') return 'xml';
@@ -121,7 +123,7 @@ export function assertTextPayloadSize(text, fileName) {
  */
 export async function sniffFeatureCountEstimate(file) {
     const format = _detectFormatFromName(file.name);
-    if (!format || !['geojson', 'json', 'kml', 'xml', 'csv'].includes(format)) {
+    if (!format || !['geojson', 'json', 'kml', 'gpx', 'xml', 'csv'].includes(format)) {
         return null;
     }
     if ((file.size ?? 0) < 512 * 1024) return null;
@@ -139,6 +141,8 @@ export async function sniffFeatureCountEstimate(file) {
         hits = (head.match(/\n/g) || []).length;
     } else if (format === 'kml' || format === 'xml') {
         hits = (head.match(/<Placemark[\s>]/gi) || []).length;
+    } else if (format === 'gpx') {
+        hits = (head.match(/<(?:trkpt|rtept|wpt)[\s/>]/gi) || []).length;
     } else {
         hits = (head.match(/"type"\s*:\s*"Feature"/gi) || []).length;
     }
@@ -149,15 +153,21 @@ export async function sniffFeatureCountEstimate(file) {
 }
 
 /**
- * Estimate coordinate density from a text sample (GeoJSON/KML).
+ * Estimate coordinate density from a text sample (GeoJSON/KML/GPX).
  * @param {string} head
  * @param {number} fileSize
+ * @param {string|null} [format]
  * @returns {number|null}
  */
-export function estimateCoordinateCountFromSample(head, fileSize) {
+export function estimateCoordinateCountFromSample(head, fileSize, format = null) {
     if (!head || fileSize < 256 * 1024) return null;
     const sampleLen = head.length;
-    const coordHits = (head.match(/\[\s*-?\d+\.?\d*\s*,\s*-?\d+\.?\d*/g) || []).length;
+    let coordHits;
+    if (format === 'gpx') {
+        coordHits = (head.match(/\blat="/gi) || []).length;
+    } else {
+        coordHits = (head.match(/\[\s*-?\d+\.?\d*\s*,\s*-?\d+\.?\d*/g) || []).length;
+    }
     if (coordHits < 5) return null;
     return Math.max(coordHits, Math.round((coordHits / sampleLen) * fileSize));
 }
@@ -168,7 +178,7 @@ export function estimateCoordinateCountFromSample(head, fileSize) {
  */
 export async function sniffCoordinateCountEstimate(file) {
     const format = _detectFormatFromName(file.name);
-    if (!format || !['geojson', 'json', 'kml', 'xml'].includes(format)) return null;
+    if (!format || !['geojson', 'json', 'kml', 'gpx', 'xml'].includes(format)) return null;
     if ((file.size ?? 0) < 256 * 1024) return null;
 
     const sampleLen = Math.min(file.size, 384 * 1024);
@@ -178,7 +188,7 @@ export async function sniffCoordinateCountEstimate(file) {
     } catch {
         return null;
     }
-    return estimateCoordinateCountFromSample(head, file.size);
+    return estimateCoordinateCountFromSample(head, file.size, format);
 }
 
 /**

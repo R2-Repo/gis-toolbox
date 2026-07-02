@@ -5,7 +5,8 @@ const SECTION_LABELS = {
     layers: 'Layers & styles',
     map: 'Map appearance',
     workflow: 'Data pipeline',
-    preferences: 'Preferences'
+    preferences: 'Preferences',
+    widgets: 'GIS Widget state'
 };
 
 function SectionCheckboxes({ sections, onChange, availableSections = PROJECT_KIT_SECTIONS }) {

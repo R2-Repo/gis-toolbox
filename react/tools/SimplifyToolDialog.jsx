@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 export function SimplifyToolDialog({
     selectionCount = 0,
@@ -12,7 +13,12 @@ export function SimplifyToolDialog({
     const [applyTo, setApplyTo] = useState(selectionCount > 0 ? 'selection' : 'layer');
 
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onApply?.({ tol: parseFloat(tolerance), applyTo })}
+            runLabel="Simplify"
+            disabled={!isApplyToValid(applyTo, selectionCount)}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
@@ -20,7 +26,7 @@ export function SimplifyToolDialog({
                 onChange={setApplyTo}
             />
             <div className="form-group">
-                <label>Tolerance (degrees, e.g., 0.001)</label>
+                <label>Tolerance (degrees)</label>
                 <input
                     type="number"
                     value={tolerance}
@@ -29,16 +35,6 @@ export function SimplifyToolDialog({
                     onChange={(e) => setTolerance(e.target.value)}
                 />
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!isApplyToValid(applyTo, selectionCount)}
-                    onClick={() => onApply?.({ tol: parseFloat(tolerance), applyTo })}
-                >
-                    Simplify
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

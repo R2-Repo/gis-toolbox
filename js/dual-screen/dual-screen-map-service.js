@@ -3,6 +3,7 @@
  * Intercepts map operations while dual-screen is active and relays them to the
  * secondary window protocol, while preserving single-window behavior by default.
  */
+import bus from '../core/event-bus.js';
 
 function buildFenceEnvelope(bbox) {
     const [west, south, east, north] = bbox;
@@ -12,6 +13,40 @@ function buildFenceEnvelope(bbox) {
         xmax: east,
         ymax: north,
         spatialReference: { wkid: 4326 }
+    };
+}
+
+const ASYNC_MAP_RPC_METHODS = [
+    'startPointPick',
+    'startTwoPointPick',
+    'startRouteTwoPointPick',
+    'startRectangleDraw',
+    'startSketchPolygon',
+    'startSketchPolyline',
+    'startSketchCirclePolygon'
+];
+
+function cloneJson(value) {
+    if (value == null) return value;
+    return JSON.parse(JSON.stringify(value));
+}
+
+function cloneDatasetForSync(dataset) {
+    if (!dataset) return null;
+    return {
+        id: dataset.id,
+        name: dataset.name,
+        type: dataset.type,
+        storage: dataset.storage ?? null,
+        workspaceLayerId: dataset.workspaceLayerId ?? null,
+        visible: dataset.visible !== false,
+        geojson: dataset.geojson ? cloneJson(dataset.geojson) : null,
+        mapLabels: dataset._mapLabels ?? null,
+        kmlExport: dataset._kmlExport ?? null,
+        scaleRangeEnabled: !!dataset.scaleRangeEnabled,
+        minScale: dataset.minScale ?? null,
+        maxScale: dataset.maxScale ?? null,
+        source: dataset.source ?? null
     };
 }
 
@@ -30,26 +65,100 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
 
     const originals = {
         addLayer: mapApi.addLayer?.bind(mapApi),
+        addWorkspaceLayer: mapApi.addWorkspaceLayer?.bind(mapApi),
+        addLayerIncremental: mapApi.addLayerIncremental?.bind(mapApi),
+        addCoverageHeatmapLayer: mapApi.addCoverageHeatmapLayer?.bind(mapApi),
         removeLayer: mapApi.removeLayer?.bind(mapApi),
         toggleLayer: mapApi.toggleLayer?.bind(mapApi),
         syncLayerOrder: mapApi.syncLayerOrder?.bind(mapApi),
         refreshLayerData: mapApi.refreshLayerData?.bind(mapApi),
         setLayerStyle: mapApi.setLayerStyle?.bind(mapApi),
+        restyleLayer: mapApi.restyleLayer?.bind(mapApi),
+        setLayerScaleRange: mapApi.setLayerScaleRange?.bind(mapApi),
         fitToAll: mapApi.fitToAll?.bind(mapApi),
         fitToLayers: mapApi.fitToLayers?.bind(mapApi),
+        fitBounds: mapApi.fitBounds?.bind(mapApi),
         setBasemap: mapApi.setBasemap?.bind(mapApi),
         enable3D: mapApi.enable3D?.bind(mapApi),
         disable3D: mapApi.disable3D?.bind(mapApi),
         getBounds: mapApi.getBounds?.bind(mapApi),
         resize: mapApi.resize?.bind(mapApi),
         getMap: mapApi.getMap?.bind(mapApi),
-        getImportFenceEsriEnvelope: mapApi.getImportFenceEsriEnvelope?.bind(mapApi)
+        getImportFenceEsriEnvelope: mapApi.getImportFenceEsriEnvelope?.bind(mapApi),
+        showTempFeature: mapApi.showTempFeature?.bind(mapApi),
+        showRouteMilepostPreview: mapApi.showRouteMilepostPreview?.bind(mapApi),
+        showWirelessPlanningPreview: mapApi.showWirelessPlanningPreview?.bind(mapApi),
+        showProjectStationingPreview: mapApi.showProjectStationingPreview?.bind(mapApi),
+        showQueryResults: mapApi.showQueryResults?.bind(mapApi),
+        clearQueryResults: mapApi.clearQueryResults?.bind(mapApi),
+        fitToFeatureIndices: mapApi.fitToFeatureIndices?.bind(mapApi),
+        pulseQueryResults: mapApi.pulseQueryResults?.bind(mapApi),
+        removeTempFeature: mapApi.removeTempFeature?.bind(mapApi),
+        clearTempFeatures: mapApi.clearTempFeatures?.bind(mapApi),
+        cancelInteraction: mapApi.cancelInteraction?.bind(mapApi),
+        startContinuousPointPick: mapApi.startContinuousPointPick?.bind(mapApi)
+    };
+
+    ASYNC_MAP_RPC_METHODS.forEach((method) => {
+        const original = originals[method] ?? mapApi[method]?.bind(mapApi);
+        originals[method] = original;
+        mapApi[method] = function dualScreenMapRpc(...args) {
+            if (!coordinator.isActive) return original?.(...args);
+            return coordinator.invokeMapRpc(method, args);
+        };
+    });
+
+    mapApi.startContinuousPointPick = function startContinuousPointPick(prompt, onPoint) {
+        if (!coordinator.isActive) {
+            return originals.startContinuousPointPick?.(prompt, onPoint);
+        }
+        return coordinator.invokeContinuousPointPick(prompt, onPoint);
     };
 
     mapApi.addLayer = function addLayer(dataset, colorIndex = 0, options = {}) {
         if (!coordinator.isActive) return originals.addLayer?.(dataset, colorIndex, options);
+        if (options.style) originals.setLayerStyle?.(dataset.id, options.style);
         coordinator.broadcastLayerAdd(dataset, colorIndex, options);
-        if (options.fit) coordinator.broadcastFit('fitLayer', { layerId: dataset?.id });
+        if (options.fit && dataset?.id) {
+            coordinator.broadcastFit('fitLayers', { layerIds: [dataset.id] });
+        }
+        return undefined;
+    };
+
+    mapApi.addWorkspaceLayer = async function addWorkspaceLayer(dataset, colorIndex = 0, options = {}) {
+        if (!coordinator.isActive) {
+            return originals.addWorkspaceLayer?.(dataset, colorIndex, options);
+        }
+        coordinator.broadcastMapCmd('addWorkspaceLayer', {
+            dataset: cloneDatasetForSync(dataset),
+            colorIndex,
+            options: cloneJson(options)
+        });
+        coordinator.syncLayersChanged();
+        return undefined;
+    };
+
+    mapApi.addLayerIncremental = async function addLayerIncremental(dataset, colorIndex = 0, options = {}) {
+        if (!coordinator.isActive) {
+            return originals.addLayerIncremental?.(dataset, colorIndex, options);
+        }
+        coordinator.broadcastLayerAdd(dataset, colorIndex, options);
+        coordinator.syncLayersChanged();
+        return undefined;
+    };
+
+    mapApi.addCoverageHeatmapLayer = function addCoverageHeatmapLayer(dataset, colorIndex = 0, options = {}) {
+        if (!coordinator.isActive) {
+            return originals.addCoverageHeatmapLayer?.(dataset, colorIndex, options);
+        }
+        coordinator.broadcastMapCmd('addCoverageHeatmapLayer', {
+            dataset: cloneDatasetForSync(dataset),
+            colorIndex,
+            options: cloneJson(options)
+        });
+        if (options.fit && dataset?.id) {
+            coordinator.broadcastFit('fitLayers', { layerIds: [dataset.id] });
+        }
         return undefined;
     };
 
@@ -73,8 +182,31 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
 
     mapApi.setLayerStyle = function setLayerStyle(layerId, style) {
         const result = originals.setLayerStyle?.(layerId, style);
-        if (coordinator.isActive) coordinator.syncLayersChanged();
+        if (coordinator.isActive) {
+            coordinator.broadcastLayerStyle(layerId, style);
+            bus.emit('map:styleChanged', { layerId });
+        }
         return result;
+    };
+
+    mapApi.restyleLayer = function restyleLayer(layerId, dataset, style) {
+        originals.setLayerStyle?.(layerId, style);
+        if (!coordinator.isActive) return originals.restyleLayer?.(layerId, dataset, style);
+        coordinator.broadcastLayerStyle(layerId, style, dataset);
+        bus.emit('map:styleChanged', { layerId });
+        return undefined;
+    };
+
+    mapApi.setLayerScaleRange = function setLayerScaleRange(layerId, range, latitude) {
+        if (!coordinator.isActive) {
+            return originals.setLayerScaleRange?.(layerId, range, latitude);
+        }
+        coordinator.broadcastMapCmd('setLayerScaleRange', {
+            layerId,
+            range: cloneJson(range),
+            latitude
+        });
+        return undefined;
     };
 
     mapApi.refreshLayerData = function refreshLayerData(dataset) {
@@ -92,6 +224,12 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
     mapApi.fitToLayers = function fitToLayers(layerIds) {
         if (!coordinator.isActive) return originals.fitToLayers?.(layerIds);
         coordinator.broadcastFit('fitLayers', { layerIds });
+        return undefined;
+    };
+
+    mapApi.fitBounds = function fitBounds(bounds, options = {}) {
+        if (!coordinator.isActive) return originals.fitBounds?.(bounds, options);
+        coordinator.broadcastFit('fitBounds', { bounds, options });
         return undefined;
     };
 
@@ -121,7 +259,6 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         return coordinator.getBounds();
     };
 
-    // Safe in both modes: map-manager resize already no-ops when no map exists.
     mapApi.resize = function resize() {
         return originals.resize?.();
     };
@@ -138,6 +275,86 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         return originals.getImportFenceEsriEnvelope?.();
     };
 
+    mapApi.showTempFeature = function showTempFeature(geojson, duration = 10000) {
+        if (!coordinator.isActive) return originals.showTempFeature?.(geojson, duration);
+        coordinator.broadcastMapCmd('showTempFeature', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showRouteMilepostPreview = function showRouteMilepostPreview(geojson, duration = 0) {
+        if (!coordinator.isActive) return originals.showRouteMilepostPreview?.(geojson, duration);
+        coordinator.broadcastMapCmd('showRouteMilepostPreview', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showWirelessPlanningPreview = function showWirelessPlanningPreview(geojson, options = 0) {
+        if (!coordinator.isActive) return originals.showWirelessPlanningPreview?.(geojson, options);
+        const payload = typeof options === 'number'
+            ? { geojson: cloneJson(geojson), options: { duration: options } }
+            : { geojson: cloneJson(geojson), options: cloneJson(options) };
+        coordinator.broadcastMapCmd('showWirelessPlanningPreview', payload);
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showProjectStationingPreview = function showProjectStationingPreview(geojson, duration = 0) {
+        if (!coordinator.isActive) return originals.showProjectStationingPreview?.(geojson, duration);
+        coordinator.broadcastMapCmd('showProjectStationingPreview', { geojson: cloneJson(geojson), duration });
+        return { dualScreenRemote: true };
+    };
+
+    mapApi.showQueryResults = function showQueryResults(layerId, indices) {
+        if (!coordinator.isActive) return originals.showQueryResults?.(layerId, indices);
+        coordinator.broadcastMapCmd('showQueryResults', {
+            layerId,
+            indices: cloneJson(indices)
+        });
+        return undefined;
+    };
+
+    mapApi.clearQueryResults = function clearQueryResults() {
+        if (!coordinator.isActive) return originals.clearQueryResults?.();
+        coordinator.broadcastMapCmd('clearQueryResults');
+        return undefined;
+    };
+
+    mapApi.fitToFeatureIndices = function fitToFeatureIndices(layerId, indices, options = {}) {
+        if (!coordinator.isActive) return originals.fitToFeatureIndices?.(layerId, indices, options);
+        coordinator.broadcastMapCmd('fitToFeatureIndices', {
+            layerId,
+            indices: cloneJson(indices),
+            options: cloneJson(options)
+        });
+        return undefined;
+    };
+
+    mapApi.pulseQueryResults = function pulseQueryResults(options = {}) {
+        if (!coordinator.isActive) return originals.pulseQueryResults?.(options);
+        coordinator.broadcastMapCmd('pulseQueryResults', { options: cloneJson(options) });
+        return undefined;
+    };
+
+    mapApi.removeTempFeature = function removeTempFeature(entry) {
+        if (!coordinator.isActive) return originals.removeTempFeature?.(entry);
+        if (entry?.dualScreenRemote) {
+            coordinator.broadcastMapCmd('popTempFeature');
+            return undefined;
+        }
+        coordinator.broadcastMapCmd('clearTempFeatures');
+        return undefined;
+    };
+
+    mapApi.clearTempFeatures = function clearTempFeatures() {
+        if (!coordinator.isActive) return originals.clearTempFeatures?.();
+        coordinator.broadcastMapCmd('clearTempFeatures');
+        return undefined;
+    };
+
+    mapApi.cancelInteraction = function cancelInteraction() {
+        if (!coordinator.isActive) return originals.cancelInteraction?.();
+        coordinator.broadcastMapCmd('cancelInteraction');
+        return undefined;
+    };
+
     return function uninstallDualScreenMapServiceDecorator() {
         Object.entries(originals).forEach(([name, fn]) => {
             if (typeof fn === 'function') {
@@ -146,4 +363,3 @@ export function installDualScreenMapServiceDecorator(mapApi, coordinator) {
         });
     };
 }
-

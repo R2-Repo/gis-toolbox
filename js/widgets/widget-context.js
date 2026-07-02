@@ -12,6 +12,13 @@ function layerHasLineGeometry(features, sampleSize = DEFAULT_FIELD_SAMPLE) {
     });
 }
 
+function layerHasPointGeometry(features, sampleSize = DEFAULT_FIELD_SAMPLE) {
+    return (features || []).slice(0, sampleSize).some((feature) => {
+        const type = feature?.geometry?.type;
+        return type === 'Point' || type === 'MultiPoint';
+    });
+}
+
 function collectFieldNames(features, sampleSize = DEFAULT_FIELD_SAMPLE) {
     const fields = new Set();
     (features || []).slice(0, sampleSize).forEach((feature) => {
@@ -33,6 +40,7 @@ export function getSpatialLayerOptions(ctx, opts = {}) {
         includeFields = false,
         requirePolygons = false,
         requireLines = false,
+        requirePoints = false,
         includeSelectionCount = false
     } = opts;
     const spatialLayers = (ctx.getLayers() || []).filter((layer) => layer.type === 'spatial');
@@ -57,6 +65,12 @@ export function getSpatialLayerOptions(ctx, opts = {}) {
                 : layerHasLineGeometry(features);
         }
 
+        if (requirePoints) {
+            option.hasPoints = !features.length && isWorkspaceLayer(layer)
+                ? true
+                : layerHasPointGeometry(features);
+        }
+
         if (includeFields) {
             option.fields = collectFieldNames(features);
         }
@@ -70,6 +84,10 @@ export function getSpatialLayerOptions(ctx, opts = {}) {
 
     if (requireLines) {
         return options.filter((option) => option.hasLines);
+    }
+
+    if (requirePoints) {
+        return options.filter((option) => option.hasPoints);
     }
 
     return options;

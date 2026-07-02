@@ -4,6 +4,8 @@
 import { createSpatialDataset, createTableDataset, explodeGeometryCollectionsInFeatureCollectionAsync } from '../core/data-model.js';
 import { AppError, ErrorCategory } from '../core/error-handler.js';
 import { importGeoJSONFromParsed } from './geojson-importer.js';
+import { parseCoordValue, detectAnyCoordinateColumns } from './coord-detect.js';
+import { projectedTableCrsMetadata } from './import-crs.js';
 
 /**
  * @param {File} file
@@ -50,10 +52,10 @@ export async function importJSON(file, task, options = {}) {
     if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
         task.updateProgress(70, 'Detecting coordinates...');
         const fields = Object.keys(data[0]);
-        const coordInfo = detectCoordinateColumns(fields, data);
+        const coordInfo = detectAnyCoordinateColumns(fields, data);
         if (coordInfo) {
             task.updateProgress(80, 'Creating spatial dataset...');
-            return rowsToSpatial(data, coordInfo, file);
+            return rowsToSpatial(data, coordInfo, file, options);
         }
         task.updateProgress(80, 'Creating table dataset...');
         return createTableDataset(
@@ -68,9 +70,9 @@ export async function importJSON(file, task, options = {}) {
         if (Array.isArray(data[key]) && data[key].length > 0 && typeof data[key][0] === 'object') {
             const rows = data[key];
             const fields = Object.keys(rows[0]);
-            const coordInfo = detectCoordinateColumns(fields, rows);
+            const coordInfo = detectAnyCoordinateColumns(fields, rows);
             if (coordInfo) {
-                return rowsToSpatial(rows, coordInfo, file);
+                return rowsToSpatial(rows, coordInfo, file, options);
             }
             return createTableDataset(
                 file.name.replace(/\.json$/i, ''),
@@ -88,49 +90,30 @@ export async function importJSON(file, task, options = {}) {
     );
 }
 
-function detectCoordinateColumns(fields, rows) {
-    const lower = fields.map(f => f.toLowerCase());
-    const latPatterns = ['lat', 'latitude', 'y', 'lat_dd', 'latitude_dd'];
-    const lonPatterns = ['lon', 'lng', 'long', 'longitude', 'x', 'lon_dd', 'longitude_dd'];
-
-    let latField = null, lonField = null;
-    for (const p of latPatterns) {
-        const idx = lower.findIndex(f => f === p || f === p.replace('_', ''));
-        if (idx >= 0) { latField = fields[idx]; break; }
-    }
-    for (const p of lonPatterns) {
-        const idx = lower.findIndex(f => f === p || f === p.replace('_', ''));
-        if (idx >= 0) { lonField = fields[idx]; break; }
-    }
-
-    if (latField && lonField) {
-        const sample = rows.slice(0, 20);
-        const validCount = sample.filter(r => {
-            const lat = parseFloat(r[latField]);
-            const lon = parseFloat(r[lonField]);
-            return !isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
-        }).length;
-        if (validCount >= sample.length * 0.5) {
-            return { latField, lonField };
-        }
-    }
-    return null;
-}
-
-function rowsToSpatial(rows, coordInfo, file) {
+function rowsToSpatial(rows, coordInfo, file, options = {}) {
     const features = rows.map(row => {
-        const lat = parseFloat(row[coordInfo.latField]);
-        const lon = parseFloat(row[coordInfo.lonField]);
+        const lat = parseCoordValue(row[coordInfo.latField]);
+        const lon = parseCoordValue(row[coordInfo.lonField]);
         const geom = (!isNaN(lat) && !isNaN(lon))
             ? { type: 'Point', coordinates: [lon, lat] }
             : null;
         return { type: 'Feature', geometry: geom, properties: { ...row } };
     });
     const fc = { type: 'FeatureCollection', features };
+    const crsMeta = coordInfo.projected
+        ? projectedTableCrsMetadata(options.sourceCrs)
+        : { crs: 'EPSG:4326', crsDetected: 'default' };
     const ds = createSpatialDataset(
         file.name.replace(/\.json$/i, ''),
         fc,
-        { file: file.name, format: 'json-spatial', coordDetected: coordInfo }
+        {
+            file: file.name,
+            format: 'json-spatial',
+            coordDetected: coordInfo,
+            crsDetected: crsMeta.crsDetected,
+            crsWarning: crsMeta.crsWarning
+        },
+        { crs: crsMeta.crs }
     );
     ds._coordInfo = coordInfo;
     return ds;

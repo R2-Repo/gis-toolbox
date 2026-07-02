@@ -44,6 +44,8 @@ export const NODE_DESCRIPTIONS = {
     'difference': 'Subtract one polygon layer from another, keeping only the remaining area.',
     'summarize-within': 'Count points inside each polygon and optionally sum or average a numeric field.',
     'split-by-geometry': 'Split a mixed layer into separate point, line, and polygon outputs.',
+    'sample': 'Randomly pick a specified number of features from the input layer.',
+    'explode': 'Extract every coordinate vertex as a point feature, preserving parent attributes.',
 
     // Enrichment
     'add-elevation': 'Look up ground elevation for each feature and store it in a new field.',

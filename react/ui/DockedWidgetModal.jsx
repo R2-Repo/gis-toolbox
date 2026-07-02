@@ -127,8 +127,7 @@ export function DockedWidgetModal({ modal }) {
                 requestAnimationFrame(() => applyFloatingPlacement(active));
             }
         };
-        dualScreenCoordinator.onStateChange(onDualScreenChange);
-        return () => dualScreenCoordinator.onStateChange(null);
+        return dualScreenCoordinator.onStateChange(onDualScreenChange);
     }, [applyFloatingPlacement]);
 
     useEffect(() => {
@@ -331,7 +330,19 @@ export function DockedWidgetModal({ modal }) {
                     title={usePanelDock ? 'Drag to undock' : 'Drag to move'}
                 >
                     <span>{modal.title}</span>
-                    <button className="btn-icon close-modal" aria-label="Close" onClick={() => close(null)}>✕</button>
+                    <button
+                        className="btn-icon close-modal"
+                        aria-label="Close"
+                        onClick={() => {
+                            if (typeof overlayRef.current?._interceptClose === 'function'
+                                && overlayRef.current._interceptClose() === true) {
+                                return;
+                            }
+                            close(null);
+                        }}
+                    >
+                        ✕
+                    </button>
                 </div>
                 <WidgetModalBody modal={modal} close={close} />
                 {modal.options?.footer ? (

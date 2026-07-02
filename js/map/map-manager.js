@@ -4,7 +4,9 @@
  */
 import logger from '../core/logger.js';
 import bus from '../core/event-bus.js';
+import { getActiveLayer, setActiveLayer } from '../core/state.js';
 import { flattenFeatureGeometryCollections, isWorkspaceLayer } from '../core/data-model.js';
+import { getCoverageRasters, isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import { MAP_CHUNK_BATCH_SIZE, RENDER_LIMITS } from './render-limits.js';
 import { buildViewportGeoJSON } from '../workspace/viewport-loader.js';
 import { getWorkspaceFeatureAttributes, getWorkspaceLayerBounds } from '../workspace/workspace-store.js';
@@ -57,7 +59,25 @@ import {
     shouldSkipClickBinding
 } from './interaction-hit.js';
 import { buildSymbolLayerLayout } from './style-symbols.js';
-import { buildMapLabelLayerSpec, resolveLayerLabels } from './map-labels.js';
+import { buildMapLabelLayerSpec, resolveLayerLabels, isMapLabelLayerId, resolveEffectiveLabelZoomRange } from './map-labels.js';
+import {
+    buildAnnotationLayerSpecs,
+    excludeAnnotationsFilter,
+    removeAnnotationSources,
+    syncAnnotationSources
+} from './map-annotations.js';
+import {
+    AnnotationOverlayManager,
+    setAnnotationLayersVisibility
+} from './annotation-overlay.js';
+import {
+    buildQueryResultFeatures,
+    fitMapToFeatures,
+    removeQueryResultLayers,
+    renderQueryResultLayers,
+    resolveFeaturesForZoom,
+    startQueryResultPulse
+} from './query-result-overlay.js';
 
 const BASEMAPS = {
     voyager: {
@@ -81,6 +101,12 @@ const BASEMAPS = {
 const LAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#be185d', '#65a30d'];
 
 const POINT_SYMBOL_NAMES = ['circle', 'square', 'triangle', 'diamond', 'star', 'pin'];
+
+const WIRELESS_COVERAGE_RASTER_PAINT = {
+    'raster-opacity': 0.78,
+    'raster-fade-duration': 0,
+    'raster-resampling': 'linear'
+};
 
 /** MapLibre filter (boolean expression): geometry-type is one of the given GeoJSON types */
 function _geomTypesFilter(types) {
@@ -159,6 +185,8 @@ class MapManager {
 
         // Scale-range re-apply when latitude shifts significantly
         this._lastScaleRangeLat = null;
+
+        this._annotationOverlay = null;
     }
 
     _layerAddSpec(baseSpec, zoomRange) {
@@ -171,29 +199,34 @@ class MapManager {
         return resolveMapLibreZoomRange(dataset, this.map.getCenter().lat);
     }
 
-    _applyZoomRangeToLayerIds(layerIds, zoomRange) {
+    _applyZoomRangeToLayerIds(layerIds, zoomRange, labelsConfig) {
         if (!this.map || !layerIds?.length) return;
-        const minz = zoomRange?.minzoom ?? MAPLIBRE_MIN_ZOOM;
-        const maxz = zoomRange?.maxzoom ?? MAPLIBRE_MAX_ZOOM;
+        const geomMin = zoomRange?.minzoom ?? MAPLIBRE_MIN_ZOOM;
+        const geomMax = zoomRange?.maxzoom ?? MAPLIBRE_MAX_ZOOM;
+        const labelRange = resolveEffectiveLabelZoomRange(labelsConfig, zoomRange);
         for (const lid of layerIds) {
-            if (this.map.getLayer(lid)) {
-                this.map.setLayerZoomRange(lid, minz, maxz);
+            if (!this.map.getLayer(lid)) continue;
+            if (isMapLabelLayerId(lid)) {
+                this.map.setLayerZoomRange(lid, labelRange.minzoom, labelRange.maxzoom);
+            } else {
+                this.map.setLayerZoomRange(lid, geomMin, geomMax);
             }
         }
     }
 
-    _applyScaleRangeForEntry(entry, scaleRangeConfig) {
+    _applyScaleRangeForEntry(layerId, entry, scaleRangeConfig) {
         if (!entry || !this.map) return;
         const config = normalizeScaleRange(scaleRangeConfig || {});
         entry.scaleRange = config;
         const zoomRange = resolveMapLibreZoomRange(config, this.map.getCenter().lat);
-        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+        const labelsConfig = this._layerStyles.get(layerId)?.labels;
+        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
     }
 
     setLayerScaleRange(layerId, range, latitude) {
         const entry = this.dataLayers.get(layerId);
         if (!entry || !this.map) return;
-        this._applyScaleRangeForEntry(entry, range);
+        this._applyScaleRangeForEntry(layerId, entry, range);
         if (Number.isFinite(latitude)) {
             this._lastScaleRangeLat = latitude;
         }
@@ -207,10 +240,11 @@ class MapManager {
 
         this._lastScaleRangeLat = lat;
         let changed = false;
-        for (const [, entry] of this.dataLayers) {
+        for (const [layerId, entry] of this.dataLayers) {
             if (!entry.scaleRange?.scaleRangeEnabled) continue;
             const zoomRange = resolveMapLibreZoomRange(entry.scaleRange, lat);
-            this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+            const labelsConfig = this._layerStyles.get(layerId)?.labels;
+            this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
             changed = true;
         }
         if (changed) {
@@ -224,7 +258,8 @@ class MapManager {
         const scaleRangeConfig = normalizeScaleRange(dataset);
         entry.scaleRange = scaleRangeConfig;
         const zoomRange = resolveMapLibreZoomRange(scaleRangeConfig, this.map.getCenter().lat);
-        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange);
+        const labelsConfig = this._layerStyles.get(dataset.id)?.labels;
+        this._applyZoomRangeToLayerIds(entry.layerIds, zoomRange, labelsConfig);
         this._lastScaleRangeLat = this.map.getCenter().lat;
     }
 
@@ -247,6 +282,7 @@ class MapManager {
             maxPitch: 85,
             dragRotate: false,
             touchZoomRotate: true,
+            preserveDrawingBuffer: true,
             // Keep parent-zoom tiles visible while zooming in so motion feels smooth
             // (default true cancels them and details pop in abruptly).
             cancelPendingTileRequestsWhileZooming: false
@@ -301,6 +337,14 @@ class MapManager {
             }, 100);
         });
 
+        this._annotationOverlay = new AnnotationOverlayManager(this.map);
+        this._annotationOverlay.setGeojsonProvider((datasetId) => this.dataLayers.get(datasetId)?.geojson);
+        this._annotationOverlay.bind();
+        bus.on('map:3dChanged', (is3D) => {
+            this._setAllAnnotationMapLibreVisibility(!is3D);
+            this._annotationOverlay?.setActive(!!is3D);
+        });
+
         // Right-click
         this.map.on('contextmenu', (e) => {
             e.preventDefault();
@@ -338,6 +382,8 @@ class MapManager {
         this._closePopup?.();
         this._cancelInteraction?.();
         this.clearSelection?.();
+        this._annotationOverlay?.destroy();
+        this._annotationOverlay = null;
         if (this._rectSelectCleanup) { this._rectSelectCleanup(); this._rectSelectCleanup = null; }
         if (this.map) {
             this.map.remove();
@@ -488,6 +534,16 @@ class MapManager {
         if (isWorkspaceLayer(dataset)) {
             return this.addWorkspaceLayer(dataset, colorIndex, { fit });
         }
+        if (isCoverageRasterLayer(dataset)) {
+            const rasters = getCoverageRasters(dataset);
+            if (rasters.length) {
+                return this.addCoverageHeatmapLayer(dataset, colorIndex, { fit });
+            }
+            logger.warn('Map', 'Coverage raster layer missing image data; showing bounds only', {
+                name: dataset.name,
+                id: dataset.id
+            });
+        }
         if (!dataset.geojson) return;
 
         this.removeLayer(dataset.id);
@@ -574,10 +630,11 @@ class MapManager {
 
         // Lines
         if (hasLines) {
+            const lineFilter = excludeAnnotationsFilter(_geomTypesFilter(['LineString', 'MultiLineString']));
             const lineId = `${dataset.id}-line`;
             this.map.addLayer({
                 id: lineId, type: 'line', source: sourceId,
-                filter: _geomTypesFilter(['LineString', 'MultiLineString']),
+                filter: lineFilter,
                 paint: {
                     'line-color': styLine.strokeColor,
                     'line-width': styLine.strokeWidth,
@@ -586,7 +643,7 @@ class MapManager {
             });
             layerIds.push(lineId);
             layerIds.push(this._ensureLineHitLayer(
-                sourceId, lineId, _geomTypesFilter(['LineString', 'MultiLineString']), styLine.strokeWidth
+                sourceId, lineId, lineFilter, styLine.strokeWidth
             ));
         }
 
@@ -597,6 +654,7 @@ class MapManager {
                 ? buildSymbolLayerLayout(layerStyle, 'point', (shape, color, fillColor, size, opacity) =>
                     this._ensureSymbolImage(shape, color, fillColor, size, opacity))
                 : null;
+            const pointGeomFilter = excludeAnnotationsFilter(_geomTypesFilter(['Point', 'MultiPoint']));
 
             if (useCluster) {
                 const clusterId = `${dataset.id}-clusters`;
@@ -621,8 +679,8 @@ class MapManager {
                 this.map.addLayer({
                     id: ptId, type: 'symbol', source: sourceId,
                     filter: useCluster
-                        ? ['all', _geomTypesFilter(['Point', 'MultiPoint']), ['!', ['has', 'point_count']]]
-                        : _geomTypesFilter(['Point', 'MultiPoint']),
+                        ? ['all', pointGeomFilter, ['!', ['has', 'point_count']]]
+                        : pointGeomFilter,
                     layout: symbolLayout.layout
                 });
                 layerIds.push(ptId);
@@ -631,8 +689,8 @@ class MapManager {
                 this.map.addLayer({
                     id: ptId, type: 'circle', source: sourceId,
                     filter: useCluster
-                        ? ['all', _geomTypesFilter(['Point', 'MultiPoint']), ['!', ['has', 'point_count']]]
-                        : _geomTypesFilter(['Point', 'MultiPoint']),
+                        ? ['all', pointGeomFilter, ['!', ['has', 'point_count']]]
+                        : pointGeomFilter,
                     paint: {
                         'circle-radius': styPoint.circleRadius,
                         'circle-color': styPoint.fillColor,
@@ -650,6 +708,8 @@ class MapManager {
             hasLines,
             useCluster
         });
+
+        this._addAnnotationLayers(dataset.id, sourceId, taggedFeatures, layerIds);
 
         // Click handlers
         this._bindLayerClickHandlers(dataset, layerIds, styFlat);
@@ -684,6 +744,103 @@ class MapManager {
             name: dataset.name,
             featureCount: dataset.geojson.features.length,
             renderParts: taggedFeatures.length
+        });
+        bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
+    }
+
+    /** Install georeferenced wireless coverage rasters (image source + raster layer). */
+    _addCoverageRasterLayers(coverageRasters = [], prefix = 'coverage') {
+        const layerIds = [];
+        const extraSourceIds = [];
+
+        coverageRasters.forEach((raster, index) => {
+            if (!raster?.dataUrl || !raster?.coordinates?.length) return;
+
+            const sourceId = `${prefix}-raster-src-${index}`;
+            const layerId = `${prefix}-raster-${index}`;
+
+            this.map.addSource(sourceId, {
+                type: 'image',
+                url: raster.dataUrl,
+                coordinates: raster.coordinates
+            });
+            this.map.addLayer({
+                id: layerId,
+                type: 'raster',
+                source: sourceId,
+                paint: WIRELESS_COVERAGE_RASTER_PAINT
+            });
+
+            extraSourceIds.push(sourceId);
+            layerIds.push(layerId);
+        });
+
+        return { layerIds, extraSourceIds };
+    }
+
+    /** Permanent wireless signal coverage raster layer(s). */
+    addCoverageHeatmapLayer(dataset, colorIndex = 0, { fit = false } = {}) {
+        if (!this.map || !dataset) return;
+
+        this.removeLayer(dataset.id);
+
+        const coverageRasters = dataset.source?.coverageRasters || [];
+        if (!coverageRasters.length) return;
+
+        const taggedFeatures = _tagFeaturesForMap(dataset).filter(
+            (f) => f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
+        );
+        const geojson = { type: 'FeatureCollection', features: taggedFeatures };
+        const sourceId = taggedFeatures.length ? `src-${dataset.id}` : null;
+
+        if (sourceId) {
+            this.map.addSource(sourceId, { type: 'geojson', data: geojson });
+        }
+
+        const rasterInstall = this._addCoverageRasterLayers(coverageRasters, dataset.id);
+        const chunkSources = [
+            ...(sourceId ? [{ sourceId, layerIds: [] }] : []),
+            ...rasterInstall.extraSourceIds.map((rasterSourceId, index) => ({
+                sourceId: rasterSourceId,
+                layerIds: [rasterInstall.layerIds[index]]
+            }))
+        ];
+
+        this.dataLayers.set(dataset.id, {
+            sourceId: sourceId || rasterInstall.extraSourceIds[0],
+            layerIds: rasterInstall.layerIds,
+            chunkSources,
+            colorIndex,
+            geojson,
+            scaleRange: normalizeScaleRange(dataset)
+        });
+        this._storeLayerScaleRange(dataset);
+        this._layerNames.set(dataset.id, dataset.name);
+
+        if (fit) {
+            try {
+                const bbox = coverageRasters.reduce((acc, raster) => {
+                    if (!raster?.bbox) return acc;
+                    const [west, south, east, north] = raster.bbox;
+                    if (!acc) return [west, south, east, north];
+                    return [
+                        Math.min(acc[0], west),
+                        Math.min(acc[1], south),
+                        Math.max(acc[2], east),
+                        Math.max(acc[3], north)
+                    ];
+                }, null);
+                if (bbox && isFinite(bbox[0])) {
+                    this.map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 30, maxZoom: 16 });
+                }
+            } catch (e) {
+                logger.warn('Map', 'Could not fit coverage raster bounds', { error: e.message });
+            }
+        }
+
+        logger.info('Map', 'Coverage raster layer added', {
+            name: dataset.name,
+            rasters: coverageRasters.length
         });
         bus.emit('map:layerAdded', { id: dataset.id, name: dataset.name });
     }
@@ -887,11 +1044,12 @@ class MapManager {
         }
 
         if (hasLines) {
+            const lineFilter = excludeAnnotationsFilter(_geomTypesFilter(['LineString', 'MultiLineString']));
             const lineId = `${idBase}-line`;
             if (!this.map.getLayer(lineId)) {
                 this.map.addLayer({
                     id: lineId, type: 'line', source: sourceId,
-                    filter: _geomTypesFilter(['LineString', 'MultiLineString']),
+                    filter: lineFilter,
                     paint: {
                         'line-color': styLine.strokeColor,
                         'line-width': styLine.strokeWidth,
@@ -901,17 +1059,18 @@ class MapManager {
             }
             layerIds.push(lineId);
             layerIds.push(this._ensureLineHitLayer(
-                sourceId, lineId, _geomTypesFilter(['LineString', 'MultiLineString']), styLine.strokeWidth
+                sourceId, lineId, lineFilter, styLine.strokeWidth
             ));
         }
 
         if (hasPoints) {
             const fo = Math.min(1, (typeof styPoint.fillOpacity === 'number' ? styPoint.fillOpacity : 0.3) + 0.3);
+            const pointGeomFilter = excludeAnnotationsFilter(_geomTypesFilter(['Point', 'MultiPoint']));
             const ptId = `${idBase}-point`;
             if (!this.map.getLayer(ptId)) {
                 this.map.addLayer({
                     id: ptId, type: 'circle', source: sourceId,
-                    filter: _geomTypesFilter(['Point', 'MultiPoint']),
+                    filter: pointGeomFilter,
                     paint: {
                         'circle-radius': styPoint.circleRadius,
                         'circle-color': styPoint.fillColor,
@@ -932,8 +1091,62 @@ class MapManager {
 
         this._bindLayerClickHandlers(dataset, layerIds, flat);
         const zoomRange = this._getLayerZoomRange(dataset);
-        this._applyZoomRangeToLayerIds(layerIds, zoomRange);
+        this._applyZoomRangeToLayerIds(layerIds, zoomRange, layerStyle.labels);
         return layerIds;
+    }
+
+    _addAnnotationLayers(datasetId, mainSourceId, taggedFeatures, layerIds) {
+        if (!this.map) return;
+
+        removeAnnotationSources(this.map, datasetId);
+
+        for (const lid of [
+            `${datasetId}-ann-callout-line`,
+            `${datasetId}-ann-anchor`,
+            `${datasetId}-ann-labels`
+        ]) {
+            if (this.map.getLayer(lid)) this.map.removeLayer(lid);
+        }
+
+        const spec = buildAnnotationLayerSpecs(datasetId, mainSourceId, taggedFeatures);
+        if (!spec.layers?.length) return;
+
+        if (spec.labelSourceId && spec.labelSourceData) {
+            this.map.addSource(spec.labelSourceId, { type: 'geojson', data: spec.labelSourceData });
+        }
+        if (spec.anchorSourceId && spec.anchorSourceData) {
+            this.map.addSource(spec.anchorSourceId, { type: 'geojson', data: spec.anchorSourceData });
+        }
+
+        for (const layer of spec.layers) {
+            this.map.addLayer(layer);
+        }
+        layerIds.push(...spec.layerIds);
+
+        this._annotationOverlay?.register(datasetId, spec.layerIds);
+        setAnnotationLayersVisibility(this.map, datasetId, !this._3dEnabled);
+        if (this._3dEnabled) {
+            this._annotationOverlay?.setActive(true);
+        }
+    }
+
+    _setAllAnnotationMapLibreVisibility(visible) {
+        if (!this.map) return;
+        for (const datasetId of this.dataLayers.keys()) {
+            setAnnotationLayersVisibility(this.map, datasetId, visible);
+        }
+    }
+
+    compositeAnnotationOverlay(ctx, pixelScale = 1) {
+        this._annotationOverlay?.compositeOntoCanvas(ctx, pixelScale);
+    }
+
+    syncAnnotationSources(datasetId, geojson) {
+        if (!this.map || !datasetId) return;
+        syncAnnotationSources(this.map, datasetId, geojson);
+        if (this._3dEnabled) {
+            this._annotationOverlay?.scheduleRefresh();
+        }
     }
 
     _addLabelLayers(layerStyle, dataset, idBase, sourceId, layerIds, { hasPoints, hasLines, useCluster = false } = {}) {
@@ -1015,10 +1228,10 @@ class MapManager {
                     this._popupLatLng = latlng;
                     this._renderCyclePopup();
 
-                    if (this._canSelect() && this._isActiveLayer(dataset.id)) {
+                    if (this._canSelect()) {
                         const ev = e.originalEvent;
                         const toggle = !!(ev?.shiftKey || ev?.ctrlKey || ev?.metaKey);
-                        this._handleSelectionClick(dataset.id, featureIndex, toggle);
+                        this._syncSelectionContext(dataset.id, featureIndex, { toggle });
                     }
                 });
             });
@@ -1134,6 +1347,8 @@ class MapManager {
                 }
                 if (this.map.getSource(chunk.sourceId)) this.map.removeSource(chunk.sourceId);
             }
+            removeAnnotationSources(this.map, id);
+            this._annotationOverlay?.unregister(id);
             this.dataLayers.delete(id);
         }
         this._workspaceDatasets?.delete(id);
@@ -1565,6 +1780,26 @@ class MapManager {
         this._3dEnabled ? this.disable3D() : this.enable3D();
     }
 
+    /**
+     * Apply 3D visuals when _3dEnabled is already true (e.g. after map re-init).
+     * Does not change camera pitch.
+     */
+    reapply3DIfEnabled() {
+        if (!this._3dEnabled || !this.map) return;
+
+        this.map.dragRotate.enable();
+        this.map.touchZoomRotate.enableRotation();
+
+        if (!this._terrainEnabled) {
+            this._apply3D();
+        } else if (!this._buildingsEnabled) {
+            this._addBuildingsLayer();
+        }
+
+        this._setAllAnnotationMapLibreVisibility(false);
+        this._annotationOverlay?.setActive(true);
+    }
+
     /** Internal helper — adds terrain, sky, buildings without changing _3dEnabled flag */
     _apply3D() {
         if (!this.map.getSource('terrain-source')) {
@@ -1713,9 +1948,9 @@ class MapManager {
                         15, 0, 16, ['get', 'render_height']
                     ],
                     'fill-extrusion-base': [
-                        'case',
-                        ['>=', ['get', 'zoom'], 16],
-                        ['get', 'render_min_height'], 0
+                        'interpolate', ['linear'], ['zoom'],
+                        15, 0,
+                        16, ['get', 'render_min_height']
                     ]
                 }
             });
@@ -1824,6 +2059,44 @@ class MapManager {
     /** Whether an orbit animation is currently running */
     get isOrbiting() { return !!this._orbitCenter; }
 
+    /**
+     * Fly to orbit view (3D, pitch, zoom clamp) before a scripted rotation export.
+     * @param {{ lng: number, lat: number }} center
+     * @param {{ zoom?: number, pitch?: number, duration?: number }} [options]
+     * @returns {Promise<{ startBearing: number }>}
+     */
+    async prepareOrbitView(center, options = {}) {
+        this.stopCameraOrbit();
+        const map = this.map;
+        if (!map) {
+            throw new Error('Map is not ready');
+        }
+
+        if (!this._3dEnabled) {
+            this.enable3D();
+        }
+
+        let zoom = options.zoom ?? map.getZoom();
+        if (zoom < MapManager.ORBIT_MIN_ZOOM) zoom = MapManager.ORBIT_MIN_ZOOM;
+        if (zoom > MapManager.ORBIT_MAX_ZOOM) zoom = MapManager.ORBIT_MAX_ZOOM;
+
+        let pitch = options.pitch ?? MapManager.ORBIT_PITCH;
+        if (pitch < 0) pitch = 0;
+        if (pitch > 85) pitch = 85;
+
+        await new Promise((resolve) => {
+            map.once('moveend', resolve);
+            map.flyTo({
+                center: [center.lng, center.lat],
+                zoom,
+                pitch,
+                duration: options.duration ?? 1500
+            });
+        });
+
+        return { startBearing: map.getBearing() };
+    }
+
     _touchClientToLngLat(clientX, clientY) {
         const rect = this.map.getContainer().getBoundingClientRect();
         return this.map.unproject(new maplibregl.Point(clientX - rect.left, clientY - rect.top));
@@ -1858,6 +2131,46 @@ class MapManager {
                 resolve([e.lngLat.lng, e.lngLat.lat]);
             };
             const onKeyDown = (e) => { if (e.key === 'Escape') { cleanup(); resolve(null); } };
+
+            const cleanup = () => {
+                canvas.style.cursor = '';
+                this.map.off('click', onClick);
+                document.removeEventListener('keydown', onKeyDown);
+                if (banner) banner.remove();
+                this._interactionCleanup = null;
+            };
+
+            this._interactionCleanup = cleanup;
+            this.map.on('click', onClick);
+            document.addEventListener('keydown', onKeyDown);
+        });
+    }
+
+    /**
+     * Repeated map clicks until Esc or banner Cancel. onPoint(coord) runs after each click.
+     * @param {string} prompt
+     * @param {(coord: number[]) => void | Promise<void>} onPoint
+     * @returns {Promise<void>}
+     */
+    startContinuousPointPick(prompt = 'Click the map to add points (Esc or Cancel when done)', onPoint) {
+        return new Promise((resolve) => {
+            this._cancelInteraction();
+            const canvas = this.map.getCanvas();
+            canvas.style.cursor = 'crosshair';
+
+            const finish = () => {
+                cleanup();
+                resolve();
+            };
+
+            const banner = this._showInteractionBanner(prompt, finish);
+
+            const onClick = (e) => {
+                markMapInteractionHandled(e);
+                const coord = [e.lngLat.lng, e.lngLat.lat];
+                Promise.resolve(onPoint?.(coord)).catch(() => finish());
+            };
+            const onKeyDown = (e) => { if (e.key === 'Escape') finish(); };
 
             const cleanup = () => {
                 canvas.style.cursor = '';
@@ -2667,10 +2980,158 @@ class MapManager {
         }
     }
 
+    popTempFeature() {
+        const entry = this._tempLayers[this._tempLayers.length - 1];
+        if (entry) this._removeTempFeature(entry);
+    }
+
     /**
-     * Route milepost widget preview: red route lines, bright-green milepost points.
-     * Features should set properties._preview to route | centerline_segment | start_mp | end_mp.
+     * Wireless site planning preview: coverage rasters, pattern outline, blue square clients, red poles.
+     * _preview: draw_client | covered | uncovered | draw_pole | pole | unused_pole | pattern_outline | antenna_indicator | assignment.
      */
+    showWirelessPlanningPreview(geojson, options = 0) {
+        let duration = 0;
+        let coverageRasters = [];
+        if (typeof options === 'number') {
+            duration = options;
+        } else {
+            duration = options.duration ?? 0;
+            coverageRasters = options.coverageRasters ?? [];
+        }
+
+        const srcId = this._nextId('temp');
+        this.map.addSource(srcId, { type: 'geojson', data: geojson });
+        const layerIds = [];
+        const extraSourceIds = [];
+
+        const rasterInstall = this._addCoverageRasterLayers(coverageRasters, srcId);
+        layerIds.push(...rasterInstall.layerIds);
+        extraSourceIds.push(...rasterInstall.extraSourceIds);
+
+        const patternOutlineId = srcId + '-pattern-outline';
+        this.map.addLayer({
+            id: patternOutlineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['LineString', 'MultiLineString']),
+                ['==', ['get', '_preview'], 'pattern_outline']
+            ],
+            paint: { 'line-color': '#dc2626', 'line-width': 2.5, 'line-opacity': 0.95 }
+        });
+        layerIds.push(patternOutlineId);
+
+        const patternOutlineLegacyId = srcId + '-pattern-outline-poly';
+        this.map.addLayer({
+            id: patternOutlineLegacyId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'pattern_outline']
+            ],
+            paint: { 'line-color': '#dc2626', 'line-width': 2.5, 'line-opacity': 0.95 }
+        });
+        layerIds.push(patternOutlineLegacyId);
+
+        const antennaIndicatorFillId = srcId + '-antenna-indicator-fill';
+        this.map.addLayer({
+            id: antennaIndicatorFillId,
+            type: 'fill',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'antenna_indicator']
+            ],
+            paint: {
+                'fill-color': ['coalesce', ['get', 'fill'], '#e879f9'],
+                'fill-opacity': ['coalesce', ['to-number', ['get', 'fill-opacity']], 0.4]
+            }
+        });
+        layerIds.push(antennaIndicatorFillId);
+
+        const antennaIndicatorOutlineId = srcId + '-antenna-indicator-outline';
+        this.map.addLayer({
+            id: antennaIndicatorOutlineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Polygon', 'MultiPolygon']),
+                ['==', ['get', '_preview'], 'antenna_indicator']
+            ],
+            paint: {
+                'line-color': ['coalesce', ['get', 'stroke'], '#c026d3'],
+                'line-width': ['coalesce', ['to-number', ['get', 'stroke-width']], 2],
+                'line-opacity': ['coalesce', ['to-number', ['get', 'stroke-opacity']], 0.9]
+            }
+        });
+        layerIds.push(antennaIndicatorOutlineId);
+
+        const assignmentLineId = srcId + '-assignment-line';
+        this.map.addLayer({
+            id: assignmentLineId,
+            type: 'line',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['LineString', 'MultiLineString']),
+                ['==', ['get', '_preview'], 'assignment']
+            ],
+            paint: { 'line-color': '#94a3b8', 'line-width': 2, 'line-dasharray': [2, 2] }
+        });
+        layerIds.push(assignmentLineId);
+
+        const clientSquareId = srcId + '-client-square';
+        const clientIcon = this._ensureSymbolImage('square', '#ffffff', '#2563eb', 8, 1);
+        this.map.addLayer({
+            id: clientSquareId,
+            type: 'symbol',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Point', 'MultiPoint']),
+                ['in', ['get', '_preview'], ['literal', ['draw_client', 'covered', 'uncovered']]]
+            ],
+            layout: {
+                'icon-image': clientIcon,
+                'icon-size': 1,
+                'icon-allow-overlap': true,
+                'icon-anchor': 'center'
+            }
+        });
+        layerIds.push(clientSquareId);
+
+        const poleCircleId = srcId + '-pole-circle';
+        this.map.addLayer({
+            id: poleCircleId,
+            type: 'circle',
+            source: srcId,
+            filter: ['all',
+                _geomTypesFilter(['Point', 'MultiPoint']),
+                ['in', ['get', '_preview'], ['literal', ['draw_pole', 'pole', 'unused_pole']]]
+            ],
+            paint: {
+                'circle-radius': [
+                    'match', ['get', '_preview'],
+                    'unused_pole', 7,
+                    9
+                ],
+                'circle-color': [
+                    'match', ['get', '_preview'],
+                    'unused_pole', '#fca5a5',
+                    '#ef4444'
+                ],
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2
+            }
+        });
+        layerIds.push(poleCircleId);
+
+        const entry = { srcId, layerIds, extraSourceIds };
+        this._tempLayers.push(entry);
+
+        if (duration > 0) setTimeout(() => this._removeTempFeature(entry), duration);
+        return entry;
+    }
+
     showRouteMilepostPreview(geojson, duration = 0) {
         const srcId = this._nextId('temp');
         this.map.addSource(srcId, { type: 'geojson', data: geojson });
@@ -2891,6 +3352,9 @@ class MapManager {
     _removeTempFeature(entry) {
         for (const lid of entry.layerIds) { if (this.map?.getLayer(lid)) this.map.removeLayer(lid); }
         if (this.map?.getSource(entry.srcId)) this.map.removeSource(entry.srcId);
+        for (const sid of entry.extraSourceIds || []) {
+            if (this.map?.getSource(sid)) this.map.removeSource(sid);
+        }
         this._tempLayers = this._tempLayers.filter(e => e !== entry);
     }
 
@@ -2963,6 +3427,22 @@ class MapManager {
     }
 
     isSelectionMode() { return this._canSelect(); }
+
+    _syncSelectionContext(layerId, featureIndex, { toggle = false } = {}) {
+        if (!this._canSelect()) return;
+        const previousId = getActiveLayer()?.id;
+        if (layerId !== previousId) {
+            if (previousId) this.clearSelection(previousId);
+            setActiveLayer(layerId);
+        }
+        this._handleSelectionClick(layerId, featureIndex, toggle);
+    }
+
+    _syncPopupHitSelection() {
+        const hit = this._getActivePopupHit();
+        if (!hit) return;
+        this._syncSelectionContext(hit.layerId, hit.featureIndex, { toggle: false });
+    }
 
     _handleSelectionClick(layerId, featureIndex, toggleKey) {
         if (!this._isActiveLayer(layerId)) return;
@@ -3182,6 +3662,51 @@ class MapManager {
     invertSelection(layerId, geojson) {
         const current = this._selections.get(layerId) || new Set();
         this.selectFeatures(layerId, geojson.features.map((_, i) => i).filter(i => !current.has(i)));
+    }
+
+    // ============================
+    // Query result overlay (temporary multi-feature highlight)
+    // ============================
+
+    _stopQueryResultPulse() {
+        if (this._queryPulseCancel) {
+            this._queryPulseCancel();
+            this._queryPulseCancel = null;
+        }
+    }
+
+    showQueryResults(layerId, indices = []) {
+        if (!this.map) return;
+        this._stopQueryResultPulse();
+        const features = buildQueryResultFeatures(this.dataLayers, layerId, indices);
+        renderQueryResultLayers(this.map, features);
+        this._queryResultLayerId = layerId;
+        this._queryResultIndices = [...indices];
+    }
+
+    clearQueryResults() {
+        this._stopQueryResultPulse();
+        if (this.map) removeQueryResultLayers(this.map);
+        this._queryResultLayerId = null;
+        this._queryResultIndices = null;
+    }
+
+    pulseQueryResults({ mode = 'pulse' } = {}) {
+        if (!this.map) return;
+        this._stopQueryResultPulse();
+        this._queryPulseCancel = startQueryResultPulse(this.map, { mode });
+    }
+
+    fitToFeatureIndices(layerId, indices = [], options = {}) {
+        if (!this.map || !indices.length) return;
+        const zoomMode = options.mode ?? 'all';
+        if (zoomMode === 'none') return;
+        const features = resolveFeaturesForZoom(this.dataLayers, layerId, indices, zoomMode);
+        if (!features?.length) return;
+        fitMapToFeatures(this.map, features, {
+            padding: options.padding ?? 48,
+            maxZoom: options.maxZoom ?? 16
+        });
     }
 
     // ============================
@@ -3577,6 +4102,7 @@ class MapManager {
                 const len = this._popupHits.length;
                 this._popupIndex = (this._popupIndex + dir + len) % len;
                 this._renderCyclePopup();
+                this._syncPopupHitSelection();
             } else if (action === 'edit') {
                 const hit = this._getActivePopupHit();
                 if (!hit) return;

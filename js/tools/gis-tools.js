@@ -641,21 +641,6 @@ export function nearestNeighborAnalysis(dataset) {
     return turf.nearestNeighborAnalysis(fc);
 }
 
-/**
- * Find all points within polygon(s)
- */
-export function pointsWithinPolygon(pointsDataset, polygonsDataset) {
-    if (typeof turf === 'undefined') throw new Error('Turf.js not loaded');
-    const points = pointsDataset.geojson;
-    const polygons = polygonsDataset.geojson;
-    const result = turf.pointsWithinPolygon(points, polygons);
-    return createSpatialDataset(
-        `${pointsDataset.name}_within_${polygonsDataset.name}`,
-        result,
-        { format: 'derived' }
-    );
-}
-
 // ============================
 // Multi-Layer Spatial Analysis
 // ============================
@@ -1083,6 +1068,51 @@ export async function summarizeWithin(polygonsDataset, pointsDataset, sumField, 
     });
 }
 
+/**
+ * Randomly sample N features from a layer.
+ * @param {object} dataset
+ * @param {number} num
+ * @returns {Promise<object>}
+ */
+export async function sampleFeatures(dataset, num) {
+    _requireDisplayReady(dataset, 'Sample');
+    if (typeof turf === 'undefined') throw new Error('Turf.js not loaded');
+
+    const count = Math.floor(Number(num));
+    if (!Number.isFinite(count) || count <= 0) {
+        throw new Error('Sample count must be a positive number');
+    }
+
+    const features = dataset.geojson.features.filter((f) => f.geometry);
+    if (features.length === 0) throw new Error('No features to sample');
+
+    const sampleCount = Math.min(count, features.length);
+    const sampled = turf.sample(turf.featureCollection(features), sampleCount);
+    return createSpatialDataset(`${dataset.name}_sample_${sampleCount}`, sampled, { format: 'derived' });
+}
+
+/**
+ * Extract every coordinate vertex as a point feature.
+ * @param {object} dataset
+ * @returns {Promise<object>}
+ */
+export async function explodeFeatures(dataset) {
+    _requireDisplayReady(dataset, 'Explode');
+    if (typeof turf === 'undefined') throw new Error('Turf.js not loaded');
+
+    const features = dataset.geojson.features.filter((f) => f.geometry);
+    if (features.length === 0) throw new Error('No features to explode');
+
+    const task = new TaskRunner('Explode', 'GISTools');
+    return task.run(async (t) => {
+        t.updateProgress(50, 'Extracting vertices');
+        await yieldToUI();
+        const exploded = turf.explode(turf.featureCollection(features));
+        if (!exploded.features.length) throw new Error('No vertices extracted');
+        return createSpatialDataset(`${dataset.name}_exploded`, exploded, { format: 'derived' });
+    });
+}
+
 export default {
     bufferFeatures, simplifyFeatures, clipFeatures, dissolveFeatures,
     pointAlong, bearing, destination, distance, pointToLineDistance,
@@ -1090,7 +1120,8 @@ export default {
     lineOffsetFeatures, lineSliceAlong, lineSlice, createSector,
     lineIntersect, findKinks, combineFeatures, unionFeatures,
     nearestPoint, nearestPointOnLine, nearestPointToLine,
-    nearestNeighborAnalysis, pointsWithinPolygon,
+    nearestNeighborAnalysis,
     spatialJoinPointsInPolygons, nearestJoin, intersectLayers,
-    mergeLayers, differenceLayers, summarizeWithin
+    mergeLayers, differenceLayers, summarizeWithin,
+    sampleFeatures, explodeFeatures
 };

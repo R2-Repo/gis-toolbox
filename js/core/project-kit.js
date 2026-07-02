@@ -3,13 +3,19 @@
  */
 import { serializeLayerForPersistence } from './session-store.js';
 import { AppError, ErrorCategory } from './error-handler.js';
+import {
+    dataUrlToBytes,
+    getCoverageRasters,
+    isCoverageRasterLayer,
+    stripCoverageRasterDataUrls
+} from './coverage-raster-layer.js';
 
 export const PROJECT_KIT_FORMAT = 'gis-toolbox-kit';
 export const PROJECT_KIT_FORMAT_VERSION = 1;
 export const PROJECT_KIT_EXTENSION = '.gis-toolbox';
 export const PROJECT_KIT_LEGACY_EXTENSION = '.gtbx';
 export const PROJECT_KIT_DISPLAY_NAME = 'Toolbox Kit';
-export const PROJECT_KIT_SECTIONS = ['layers', 'map', 'workflow', 'preferences'];
+export const PROJECT_KIT_SECTIONS = ['layers', 'map', 'workflow', 'preferences', 'widgets'];
 export const WORKFLOW_NODE_CACHE_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
@@ -94,6 +100,7 @@ export function resolveLayerIdConflict(id, existingIds) {
  *   map?: object|null,
  *   workflow?: { pipeline: object, nodeCache?: object }|null,
  *   preferences?: object|null,
+ *   widgets?: { activeWidgets?: object[] }|null,
  *   exportWorkspaceLayerBundle?: (layerId: string) => Promise<object|null>,
  *   projectName?: string
  * }} options
@@ -105,7 +112,8 @@ export async function buildProjectKitSnapshot(options) {
         layers: null,
         map: null,
         workflow: null,
-        preferences: null
+        preferences: null,
+        widgets: null
     };
 
     if (sections.includes('layers') && Array.isArray(options.layers)) {
@@ -129,6 +137,14 @@ export async function buildProjectKitSnapshot(options) {
 
     if (sections.includes('preferences') && options.preferences) {
         snapshot.preferences = { ...options.preferences };
+    }
+
+    if (sections.includes('widgets') && options.widgets) {
+        snapshot.widgets = {
+            activeWidgets: Array.isArray(options.widgets.activeWidgets)
+                ? options.widgets.activeWidgets
+                : []
+        };
     }
 
     return snapshot;
@@ -166,9 +182,24 @@ async function gatherLayerSection(layers, activeLayerId, layerStyles, exportWork
     const spatial = {};
     const tables = {};
     const workspace = {};
+    const rasters = {};
 
     for (const layer of layers) {
-        index.push(serializeLayerForPersistence(layer));
+        let saved = serializeLayerForPersistence(layer);
+        if (isCoverageRasterLayer(layer)) {
+            const coverageRasters = getCoverageRasters(layer);
+            rasters[layer.id] = coverageRasters;
+            saved = {
+                ...saved,
+                source: {
+                    ...(saved.source || {}),
+                    coverageType: 'raster',
+                    coverageRasterSidecar: true,
+                    coverageRasters: stripCoverageRasterDataUrls(coverageRasters)
+                }
+            };
+        }
+        index.push(saved);
         if (layer.type === 'spatial' && layer.geojson) {
             spatial[layer.id] = layer.geojson;
         } else if (layer.type === 'table' && layer.rows) {
@@ -186,7 +217,8 @@ async function gatherLayerSection(layers, activeLayerId, layerStyles, exportWork
         styles: layerStyles && typeof layerStyles === 'object' ? layerStyles : {},
         spatial,
         tables,
-        workspace
+        workspace,
+        rasters
     };
 }
 
@@ -229,6 +261,16 @@ export async function packProjectKit(snapshot, JSZipLib, task) {
                 zip.file(`layers/workspace/${id}/attributes.json`, JSON.stringify(bundle.attributes));
             }
         }
+        for (const [layerId, coverageRasters] of Object.entries(snapshot.layers.rasters || {})) {
+            const manifest = stripCoverageRasterDataUrls(coverageRasters);
+            zip.file(`layers/rasters/${layerId}/manifest.json`, JSON.stringify(manifest, null, 2));
+            coverageRasters.forEach((raster, index) => {
+                const bytes = dataUrlToBytes(raster.dataUrl);
+                if (!bytes) return;
+                const file = manifest[index]?.file || `${index}.png`;
+                zip.file(`layers/rasters/${layerId}/${file}`, bytes);
+            });
+        }
     }
 
     if (snapshot.map) {
@@ -244,6 +286,11 @@ export async function packProjectKit(snapshot, JSZipLib, task) {
     if (snapshot.preferences) {
         task?.updateProgress?.(90, 'Packing preferences…');
         zip.file('preferences.json', JSON.stringify(snapshot.preferences, null, 2));
+    }
+
+    if (snapshot.widgets) {
+        task?.updateProgress?.(92, 'Packing widget state…');
+        zip.file('widgets.json', JSON.stringify(snapshot.widgets, null, 2));
     }
 
     task?.updateProgress?.(95, 'Compressing…');
@@ -278,7 +325,7 @@ export async function parseProjectKit(input, JSZipLib, task) {
     }
 
     const sections = normalizeSections(manifest.sections);
-    const snapshot = { manifest, layers: null, map: null, workflow: null, preferences: null };
+    const snapshot = { manifest, layers: null, map: null, workflow: null, preferences: null, widgets: null };
 
     if (sections.includes('layers') && zip.file('layers/index.json')) {
         task?.updateProgress?.(30, 'Loading layers…');
@@ -301,6 +348,11 @@ export async function parseProjectKit(input, JSZipLib, task) {
         snapshot.preferences = JSON.parse(prefRaw);
     }
 
+    if (sections.includes('widgets') && zip.file('widgets.json')) {
+        const widgetsRaw = await zip.file('widgets.json').async('string');
+        snapshot.widgets = JSON.parse(widgetsRaw);
+    }
+
     task?.updateProgress?.(100, 'Done');
     return snapshot;
 }
@@ -314,6 +366,7 @@ async function parseLayerSection(zip) {
     const spatial = {};
     const tables = {};
     const workspace = {};
+    const rasters = {};
 
     const paths = Object.keys(zip.files);
     for (const path of paths) {
@@ -343,6 +396,22 @@ async function parseLayerSection(zip) {
                 ? JSON.parse(await zip.file(attrPath).async('string'))
                 : [];
             workspace[layerKey] = { meta, chunks, attributes };
+            continue;
+        }
+        const rasterManifestMatch = path.match(/^layers\/rasters\/([^/]+)\/manifest\.json$/);
+        if (rasterManifestMatch) {
+            const layerKey = rasterManifestMatch[1];
+            const manifest = JSON.parse(await zip.file(path).async('string'));
+            const pngBlobsByFile = {};
+            for (const entry of manifest) {
+                const file = entry.file;
+                if (!file) continue;
+                const pngPath = `layers/rasters/${layerKey}/${file}`;
+                const zipEntry = zip.file(pngPath);
+                if (!zipEntry) continue;
+                pngBlobsByFile[file] = await zipEntry.async('uint8array');
+            }
+            rasters[layerKey] = { manifest, pngBlobsByFile };
         }
     }
 
@@ -352,7 +421,8 @@ async function parseLayerSection(zip) {
         styles,
         spatial,
         tables,
-        workspace
+        workspace,
+        rasters
     };
 }
 
@@ -383,6 +453,8 @@ export function summarizeProjectKit(snapshot) {
         hasMap: !!snapshot?.map,
         hasWorkflow: workflowNodeCount > 0,
         hasPreferences: !!snapshot?.preferences,
+        hasWidgets: Array.isArray(snapshot?.widgets?.activeWidgets) && snapshot.widgets.activeWidgets.length > 0,
+        widgetCount: snapshot?.widgets?.activeWidgets?.length ?? 0,
         workflowNodeCount
     };
 }

@@ -25,28 +25,23 @@ export const MAP_GIS_TOOLS = [
     { id: 'bezier-spline', action: 'openBezierSpline', category: 'transformation', label: '🌊 Spline', tip: 'Smooth jagged lines into gentle, flowing curves (bezier splines).' },
     { id: 'polygon-smooth', action: 'openPolygonSmooth', category: 'transformation', label: '🔵 Smooth', tip: 'Round off rough polygon edges by averaging corner positions.' },
     { id: 'line-offset', action: 'openLineOffset', category: 'transformation', label: '↔ Offset', tip: 'Create a parallel copy of a line shifted left or right by a set distance.' },
-    { id: 'reproject', action: 'openReproject', category: 'transformation', label: '🗺 Reproject', tip: 'Transform layer geometries from one coordinate system to another — creates a new layer.' },
+    { id: 'reproject', action: 'openReproject', category: 'transformation', label: '🗺 Reproject', tip: 'Fix layers that don\'t display on the map — converts coordinates to WGS 84 and creates a new layer.' },
     { id: 'sector', action: 'openSector', category: 'transformation', label: '🥧 Sector', tip: 'Create a pie-slice shaped area from a center point.' },
 
     { id: 'line-slice-along', action: 'openLineSliceAlong', category: 'line-ops', label: '✂ Slice Along', tip: 'Cut out a section of a line using start and end distances.' },
     { id: 'line-slice', action: 'openLineSlice', category: 'line-ops', label: '✂ Slice Pts', tip: 'Click two points on the map to cut out the section of line between them.' },
     { id: 'line-intersect', action: 'openLineIntersect', category: 'line-ops', label: '✖ Intersect', tip: 'Find all points where two sets of lines cross each other.' },
     { id: 'kinks', action: 'openKinks', category: 'line-ops', label: '⚠ Kinks', tip: 'Find self-intersections in line or polygon geometries.' },
+    { id: 'explode', action: 'openExplode', category: 'line-ops', label: '💥 Explode', tip: 'Extract every vertex as a point feature — creates a new point layer.' },
 
     { id: 'combine', action: 'openCombine', category: 'combine-analyze', label: '🔗 Combine', tip: 'Merge all features of the same type into one multi-feature.' },
     { id: 'union', action: 'openUnion', category: 'combine-analyze', label: '🔶 Union', tip: 'Merge all polygons into a single shape.' },
     { id: 'dissolve', action: 'openDissolve', category: 'combine-analyze', label: '🫧 Dissolve', tip: 'Merge polygons by a shared attribute, or merge all when no field is chosen — creates a new layer.' },
-    {
-        id: 'points-in-poly',
-        action: 'openPointsWithinPolygon',
-        category: 'combine-analyze',
-        label: '📍🔷 Points in Poly (filter)',
-        tip: 'Filter to points inside polygons — creates a new layer. (Pipeline Spatial Join copies polygon attributes onto points instead.)'
-    },
     { id: 'nearest-point', action: 'openNearestPoint', category: 'combine-analyze', label: '🎯 Nearest Pt', tip: 'Click the map to find the closest feature in a point layer.' },
     { id: 'nearest-on-line', action: 'openNearestPointOnLine', category: 'combine-analyze', label: '📍→ Snap', tip: 'Click near a line to find the closest point on that line.' },
     { id: 'nearest-point-to-line', action: 'openNearestPointToLine', category: 'combine-analyze', label: '📍↔ Pt to Ln', tip: 'Find which point feature is closest to a given line.' },
-    { id: 'nn-analysis', action: 'openNearestNeighborAnalysis', category: 'combine-analyze', label: '📊 NN Analysis', tip: 'Statistically test whether points are clustered, spread apart, or random.' }
+    { id: 'nn-analysis', action: 'openNearestNeighborAnalysis', category: 'combine-analyze', label: '📊 NN Analysis', tip: 'Statistically test whether points are clustered, spread apart, or random.' },
+    { id: 'sample', action: 'openSample', category: 'combine-analyze', label: '🎲 Sample', tip: 'Randomly pick N features from the layer — creates a new layer.' }
 ];
 
 const MAP_CATEGORY_LABELS = {
@@ -68,14 +63,32 @@ export const V1_MAP_TOOL_IDS = new Set([
     'dissolve',
     'line-offset',
     'reproject',
-    'points-in-poly'
+    'union',
+    'kinks',
+    'sample',
+    'explode'
 ]);
+
+/** Pipeline nodes matching the map Layer Data Tools panel (see LayerDataToolsPanel.jsx). */
+export const LAYER_DATA_NODE_ORDER = [
+    'split-column',
+    'combine-fields',
+    'template-builder',
+    'find-replace',
+    'type-convert',
+    'filter-rows',
+    'deduplicate',
+    'join-lookup',
+    'add-unique-id'
+];
+
+export const LAYER_DATA_NODE_TYPES = new Set(LAYER_DATA_NODE_ORDER);
 
 /** Pipeline node types enabled in V1 testing mode. */
 export const V1_PIPELINE_NODE_TYPES = new Set([
     'layer-input',
     'file-import',
-    'filter-rows',
+    ...LAYER_DATA_NODE_ORDER,
     'buffer',
     'simplify',
     'clip',
@@ -83,6 +96,9 @@ export const V1_PIPELINE_NODE_TYPES = new Set([
     'line-offset',
     'reproject',
     'spatial-join',
+    'union',
+    'sample',
+    'explode',
     'add-to-map',
     'preview'
 ]);
@@ -94,6 +110,14 @@ export const V1_PIPELINE_NODE_TYPES = new Set([
 export function isMapToolEnabled(id) {
     if (!GIS_TOOL_V1_MODE) return true;
     return V1_MAP_TOOL_IDS.has(id);
+}
+
+/**
+ * @param {string} type
+ * @returns {boolean}
+ */
+export function isLayerDataNodeType(type) {
+    return LAYER_DATA_NODE_TYPES.has(type);
 }
 
 /**

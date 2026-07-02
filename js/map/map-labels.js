@@ -2,11 +2,14 @@
  * MapLibre text label layer config for GeoJSON sources.
  */
 
+import { MAPLIBRE_MAX_ZOOM } from './scale-range.js';
+
 export const DEFAULT_LAYER_LABELS = {
     enabled: false,
     field: '',
     placement: 'point',
     minZoom: 11,
+    maxZoom: MAPLIBRE_MAX_ZOOM,
     size: 11,
     offset: [0, 1.1],
     anchor: 'top',
@@ -25,6 +28,7 @@ const DEFAULT_LABELS = {
     field: 'station',
     placement: 'point',
     minZoom: 11,
+    maxZoom: MAPLIBRE_MAX_ZOOM,
     size: 11,
     offset: [0, 1.1],
     anchor: 'top',
@@ -39,6 +43,39 @@ const DEFAULT_LABELS = {
 };
 
 const NAME_LIKE_FIELD_RE = /^(name|label|title|station|route|road|street|description|desc)$/i;
+
+/**
+ * @param {string} layerId
+ * @returns {boolean}
+ */
+export function isMapLabelLayerId(layerId) {
+    return typeof layerId === 'string'
+        && (layerId.endsWith('-labels') || layerId.endsWith('-line-labels'));
+}
+
+/**
+ * Intersect label zoom window with optional layer visibility range.
+ * @param {object|null|undefined} labelsConfig
+ * @param {{ minzoom: number, maxzoom: number }|null} layerZoomRange
+ * @returns {{ minzoom: number, maxzoom: number }}
+ */
+export function resolveEffectiveLabelZoomRange(labelsConfig, layerZoomRange) {
+    const labelMin = Number.isFinite(labelsConfig?.minZoom)
+        ? labelsConfig.minZoom
+        : DEFAULT_LAYER_LABELS.minZoom;
+    const labelMax = Number.isFinite(labelsConfig?.maxZoom)
+        ? labelsConfig.maxZoom
+        : DEFAULT_LAYER_LABELS.maxZoom;
+
+    if (!layerZoomRange) {
+        return { minzoom: labelMin, maxzoom: labelMax };
+    }
+
+    return {
+        minzoom: Math.max(labelMin, layerZoomRange.minzoom),
+        maxzoom: Math.min(labelMax, layerZoomRange.maxzoom)
+    };
+}
 
 /**
  * @param {Array<{ name: string, type?: string, uniqueCount?: number, selected?: boolean }>} fields
@@ -132,6 +169,9 @@ export function normalizeLayerLabels(labels) {
  * @returns {string}
  */
 export function resolvePlacemarkLabel(feature, idx, style) {
+    if (feature?.properties?._annotationType && feature?.properties?.text) {
+        return String(feature.properties.text);
+    }
     const labels = style?.labels;
     if (labels?.enabled && labels.field) {
         const val = feature?.properties?.[labels.field];
@@ -198,6 +238,7 @@ export function buildMapLabelLayerSpec(datasetId, sourceId, mapLabels, useCluste
         source: sourceId,
         filter,
         minzoom: cfg.minZoom,
+        maxzoom: cfg.maxZoom,
         layout,
         paint: {
             'text-color': cfg.color,
@@ -238,6 +279,7 @@ export function buildMapLineLabelLayerSpec(datasetId, sourceId, cfg) {
         source: sourceId,
         filter: ['==', ['geometry-type'], 'LineString'],
         minzoom: cfg.minZoom,
+        maxzoom: cfg.maxZoom,
         layout,
         paint: {
             'text-color': cfg.color,

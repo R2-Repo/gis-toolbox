@@ -179,6 +179,48 @@ html, body {
     align-items: center;
     flex-shrink: 0;
 }
+
+.header-print-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-print-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    min-width: 160px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+    overflow: hidden;
+    padding: 4px 0;
+}
+
+.header-print-dropdown.open {
+    display: block;
+}
+
+.header-print-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.header-print-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
 .header-pipeline-dual {
     display: inline-flex;
     align-items: center;
@@ -1101,6 +1143,17 @@ textarea { resize: vertical; min-height: 60px; }
 .modal--panel-dock .gis-widget .form-group {
     margin-bottom: 8px;
 }
+.modal--panel-dock .gis-widget .warning-box,
+.modal--panel-dock .gis-widget .info-box {
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    line-height: 1.35;
+}
+.modal--panel-dock .gis-widget .toggle span {
+    font-size: 11px;
+    line-height: 1.35;
+}
 .gis-widget__row {
     display: flex;
     flex-direction: column;
@@ -1851,6 +1904,33 @@ textarea { resize: vertical; min-height: 60px; }
 .selection-bar .sel-btn.sel-clear:hover {
     background: rgba(255,107,107,0.2);
 }
+.selection-bar--header {
+    padding: 2px 8px;
+    margin-bottom: 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.65);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+    flex-wrap: nowrap;
+}
+.selection-bar--header .sel-count {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.85);
+}
+.selection-bar--header .sel-delete {
+    background: rgba(255, 107, 107, 0.12);
+    border: 1px solid rgba(255, 107, 107, 0.35);
+    color: #ff6b6b;
+    min-height: 28px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.selection-bar--header .sel-delete:hover:not(:disabled) {
+    background: rgba(255, 107, 107, 0.22);
+    border-color: rgba(255, 107, 107, 0.5);
+}
 .btn-selection-toggle {
     background: transparent;
     border: 1px solid var(--border);
@@ -1996,6 +2076,65 @@ textarea { resize: vertical; min-height: 60px; }
 .draw-undo-btn:hover {
     border-color: var(--primary);
     color: var(--primary);
+}
+.draw-edit-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.annotation-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    overflow: hidden;
+}
+.annotation-overlay-lines {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+.annotation-overlay-labels {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.annotation-overlay-label {
+    position: absolute;
+    white-space: pre-wrap;
+    max-width: 280px;
+    line-height: 1.2;
+    pointer-events: none;
+    user-select: none;
+}
+
+.text-annotation-dialog textarea,
+.text-annotation-dialog input[type="number"],
+.text-annotation-dialog select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: 13px;
+}
+.text-annotation-dialog textarea {
+    min-height: 64px;
+    resize: vertical;
+}
+.text-annotation-style-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+.text-annotation-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
 }
 
 /* Editable vertex marker (select mode) */

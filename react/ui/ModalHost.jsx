@@ -46,6 +46,10 @@ function BasicModal({ modal }) {
             onMouseDown={(e) => { mouseDownTargetRef.current = e.target; }}
             onClick={(e) => {
                 if (e.target === overlayRef.current && mouseDownTargetRef.current === overlayRef.current) {
+                    if (typeof overlayRef.current?._interceptClose === 'function'
+                        && overlayRef.current._interceptClose() === true) {
+                        return;
+                    }
                     close(null);
                 }
             }}
@@ -53,7 +57,19 @@ function BasicModal({ modal }) {
             <div className="modal" style={{ width }}>
                 <div className="modal-header">
                     <span>{modal.title}</span>
-                    <button className="btn-icon close-modal" aria-label="Close" onClick={() => close(null)}>✕</button>
+                    <button
+                        className="btn-icon close-modal"
+                        aria-label="Close"
+                        onClick={() => {
+                            if (typeof overlayRef.current?._interceptClose === 'function'
+                                && overlayRef.current._interceptClose() === true) {
+                                return;
+                            }
+                            close(null);
+                        }}
+                    >
+                        ✕
+                    </button>
                 </div>
                 <div className="modal-body" />
                 {modal.options?.footer ? (

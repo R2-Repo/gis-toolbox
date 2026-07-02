@@ -1,3 +1,5 @@
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
+
 export function UnionPolygonsDialog({
     polygonCount = 0,
     isSelection = false,
@@ -5,21 +7,21 @@ export function UnionPolygonsDialog({
     onCancel,
     onUnion
 }) {
+    const statusParts = [];
+    if (showLargeWarning) statusParts.push('Large dataset — this may be slow.');
+    if (isSelection) statusParts.push(`Unioning ${polygonCount} selected polygons.`);
+
     return (
-        <div>
-            <p>Merge all {polygonCount} polygon features into a single unified polygon. Overlapping areas are dissolved.</p>
-            {showLargeWarning ? (
-                <div className="warning-box">Large dataset — this may be slow.</div>
-            ) : null}
-            {isSelection ? (
-                <p className="info-box text-xs">
-                    Unioning <strong>{polygonCount}</strong> selected polygons.
-                </p>
-            ) : null}
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button className="btn btn-primary apply-btn" onClick={() => onUnion?.()}>Union</button>
-            </div>
-        </div>
+        <WidgetPanelShell
+            status={statusParts.join(' ')}
+            statusTone={showLargeWarning ? 'muted' : 'muted'}
+            onCancel={onCancel}
+            onRun={() => onUnion?.()}
+            runLabel="Union"
+        >
+            <p className="text-xs text-muted">
+                Merge {polygonCount} polygon{polygonCount === 1 ? '' : 's'} into one unified shape.
+            </p>
+        </WidgetPanelShell>
     );
 }

@@ -147,7 +147,7 @@ export function FileImportInspector({ node, config, onConfigChange, importFile }
                     ref={inputRef}
                     type="file"
                     id={inputId}
-                    accept=".csv,.tsv,.txt,.json,.geojson,.kml,.kmz,.xlsx,.xls,.zip"
+                    accept=".csv,.tsv,.txt,.json,.geojson,.kml,.kmz,.gpx,.xlsx,.xls,.zip"
                     style={{
                         position: 'absolute',
                         width: 1,

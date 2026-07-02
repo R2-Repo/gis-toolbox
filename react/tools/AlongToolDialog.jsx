@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -15,14 +16,18 @@ export function AlongToolDialog({
     const [applyTo, setApplyTo] = useState(selectionCount > 0 ? 'selection' : 'layer');
 
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onPick?.({ dist: parseFloat(distance), units, applyTo })}
+            runLabel="Find Point"
+            disabled={!isApplyToValid(applyTo, selectionCount)}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
                 layerName={layerName}
                 onChange={setApplyTo}
             />
-            <p>Get a point at a specified distance along a line feature.</p>
             <div className="form-group">
                 <label>Distance along line</label>
                 <input
@@ -43,17 +48,6 @@ export function AlongToolDialog({
                     ))}
                 </select>
             </div>
-            <div className="info-box text-xs">Uses the first LineString in the layer or selection.</div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!isApplyToValid(applyTo, selectionCount)}
-                    onClick={() => onPick?.({ dist: parseFloat(distance), units, applyTo })}
-                >
-                    Find Point
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

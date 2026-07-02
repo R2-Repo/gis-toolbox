@@ -42,7 +42,7 @@ import { ImportReductionNotice } from './ImportReductionNotice.jsx';
 
 
 
-const LOCAL_FILE_ACCEPT = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.zip,.xml,.gis-toolbox,.gtbx';
+const LOCAL_FILE_ACCEPT = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.gpx,.zip,.xml,.gis-toolbox,.gtbx';
 
 export function ImportFlowDialog({
 

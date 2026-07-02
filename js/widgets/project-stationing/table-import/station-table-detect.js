@@ -11,8 +11,8 @@ const HEADER_PATTERNS = {
     station: /\b(sta|station|stationing|alignment station|location|loc|milepoint|mp|chainage|begin station|end station|from station|to station)\b/i,
     offset: /\b(offset|off|offset ft|offset feet|distance from centerline|dist from cl|cl offset)\b/i,
     side: /\b(side|lt rt|left right|offset side)\b/i,
-    latitude: /\b(lat|latitude|gps lat|gps latitude|point lat|decimal latitude|y)\b/i,
-    longitude: /\b(lon|long|longitude|gps lon|gps long|gps longitude|point long|decimal longitude|x)\b/i,
+    latitude: /\b(lat|latitude|gps lat|gps latitude|point lat|decimal latitude|y|northing|northings)\b/i,
+    longitude: /\b(lon|long|longitude|gps lon|gps long|gps longitude|point long|decimal longitude|x|easting|eastings)\b/i,
     label: /\b(name|label|desc|description|asset|asset id|its ref|its_ref|ref|id)\b/i
 };
 
@@ -35,7 +35,7 @@ function bestColumn(columns, rows, kind, valueScorer) {
     for (const field of columns || []) {
         const normalizedField = String(field).replace(/[_-]+/g, ' ');
         const headerScore = HEADER_PATTERNS[kind]?.test(normalizedField) ? 1 : 0;
-        const valueScore = scoreByValues(valuesFor(rows, field), valueScorer);
+        const valueScore = scoreByValues(valuesFor(rows, field), (v) => valueScorer(v, field));
         const conf = confidence(headerScore, valueScore);
         if (conf > best.confidence) best = { field, confidence: conf, headerScore, valueScore };
     }
@@ -91,16 +91,22 @@ export function getOffsetEmbeddedSideForMapping(rows = [], offsetField = '') {
 }
 
 export function scoreLatitudeColumn(field, values = []) {
+    const projectedHeader = /\b(northing|northings)\b/i.test(String(field).replace(/[_-]+/g, ' '));
     return confidence(HEADER_PATTERNS.latitude.test(field) ? 1 : 0, scoreByValues(values, (v) => {
         const n = Number(v);
-        return Number.isFinite(n) && Math.abs(n) <= 90;
+        if (!Number.isFinite(n)) return false;
+        if (projectedHeader) return true;
+        return Math.abs(n) <= 90;
     }));
 }
 
 export function scoreLongitudeColumn(field, values = []) {
+    const projectedHeader = /\b(easting|eastings)\b/i.test(String(field).replace(/[_-]+/g, ' '));
     return confidence(HEADER_PATTERNS.longitude.test(field) ? 1 : 0, scoreByValues(values, (v) => {
         const n = Number(v);
-        return Number.isFinite(n) && Math.abs(n) <= 180;
+        if (!Number.isFinite(n)) return false;
+        if (projectedHeader) return true;
+        return Math.abs(n) <= 180;
     }));
 }
 
@@ -111,13 +117,17 @@ export function detectStationTableColumns(rows = [], columns = null) {
     );
     const offset = bestColumn(fields, rows, 'offset', (v) => parseOffsetValue(v).valid);
     const side = bestColumn(fields, rows, 'side', (v) => Boolean(normalizeSide(v)));
-    const latitude = bestColumn(fields, rows, 'latitude', (v) => {
+    const latitude = bestColumn(fields, rows, 'latitude', (v, field) => {
         const n = Number(v);
-        return Number.isFinite(n) && Math.abs(n) <= 90;
+        if (!Number.isFinite(n)) return false;
+        if (/\b(northing|northings)\b/i.test(String(field).replace(/[_-]+/g, ' '))) return true;
+        return Math.abs(n) <= 90;
     });
-    const longitude = bestColumn(fields, rows, 'longitude', (v) => {
+    const longitude = bestColumn(fields, rows, 'longitude', (v, field) => {
         const n = Number(v);
-        return Number.isFinite(n) && Math.abs(n) <= 180;
+        if (!Number.isFinite(n)) return false;
+        if (/\b(easting|eastings)\b/i.test(String(field).replace(/[_-]+/g, ' '))) return true;
+        return Math.abs(n) <= 180;
     });
     const label = bestColumn(fields, rows, 'label', (v) => String(v ?? '').trim().length > 0);
     const combinedCoordinate = bestColumn(fields, rows, 'latitude', (v) => parseCombinedCoordinate(v).valid);

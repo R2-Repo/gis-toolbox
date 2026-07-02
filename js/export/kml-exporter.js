@@ -256,7 +256,9 @@ function _isKmlLabelOnlyLayer(style, dataset) {
     return false;
 }
 
-function _kmlIconMode(style, dataset, geometry, features) {
+function _kmlIconMode(style, dataset, featureOrGeom, features) {
+    const geometry = featureOrGeom?.geometry ?? featureOrGeom;
+    if (featureOrGeom?.properties?._annotationType === 'text') return 'hidden';
     if (_primaryGeomGroup(geometry) !== 'point') return 'none';
     if (_isKmlLabelOnlyLayer(style, dataset)) return 'hidden';
     if (isKmlMilepostLayer(dataset, style, features)) return 'milepost';
@@ -271,7 +273,7 @@ function _layerIconMode(style, dataset, features) {
 
 function _layerUsesLabelOnlyPoints(style, dataset, features) {
     if (_isKmlLabelOnlyLayer(style, dataset)) return true;
-    return (features || []).every((f) => _kmlIconMode(style, dataset, f.geometry, features) === 'hidden');
+    return (features || []).every((f) => _kmlIconMode(style, dataset, f, features) === 'hidden');
 }
 
 function _kmlStyleEl(id, s, iconMode = 'none', exportOptions = {}) {

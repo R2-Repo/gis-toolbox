@@ -15,6 +15,8 @@
     --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.45);
     --radius: 12px;
     --radius-sm: 8px;
+    --radius-lg: 16px;
+    --bg-modal: rgba(0, 0, 0, 0.55);
     --font: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 }
@@ -51,6 +53,48 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+}
+
+.header-print-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-print-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    min-width: 160px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+    overflow: hidden;
+    padding: 4px 0;
+}
+
+.header-print-dropdown.open {
+    display: block;
+}
+
+.header-print-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.header-print-item:hover {
+    background: rgba(255, 255, 255, 0.06);
 }
 
 .map-window-main {
@@ -164,6 +208,128 @@
 .draw-tool-btn:hover, .draw-tool-btn.active {
     background: #2563eb;
     border-color: #2563eb;
+}
+
+.draw-toolbar-actions {
+    display: flex;
+    gap: 4px;
+    min-height: 0;
+}
+.draw-action-btn {
+    padding: 5px 10px;
+    border: 1px solid #3d3d42;
+    border-radius: 6px;
+    background: #2d2d30;
+    color: #98989d;
+    cursor: pointer;
+    font-size: 11px;
+    flex: 1;
+}
+.draw-action-btn:hover {
+    color: #e8eaed;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-modal);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.modal {
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    border: 1px solid var(--border);
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 15px;
+}
+.modal-body { flex: 1; overflow-y: auto; padding: 18px; }
+.btn {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--bg-surface);
+    color: var(--text);
+}
+.btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.btn-ghost { background: transparent; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.text-annotation-dialog textarea,
+.text-annotation-dialog input[type="number"],
+.text-annotation-dialog select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel);
+    color: var(--text);
+    font-size: 13px;
+    box-sizing: border-box;
+}
+.text-annotation-dialog textarea {
+    min-height: 64px;
+    resize: vertical;
+}
+.text-annotation-style-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+.text-annotation-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+.text-xs { font-size: 11px; }
+.text-muted { color: var(--text-muted); }
+.form-group { margin-bottom: 8px; }
+
+.annotation-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+    overflow: hidden;
+}
+.annotation-overlay-lines {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+.annotation-overlay-labels {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.annotation-overlay-label {
+    position: absolute;
+    white-space: pre-wrap;
+    max-width: 280px;
+    line-height: 1.2;
+    pointer-events: none;
+    user-select: none;
 }
 
 .map-window-toast {

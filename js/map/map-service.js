@@ -76,8 +76,31 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
             return !!mapAdapter._3dEnabled;
         },
         set3DEnabled(enabled) {
-            mapAdapter._3dEnabled = !!enabled;
-            return !!mapAdapter._3dEnabled;
+            const want = !!enabled;
+            const hasMap = !!mapAdapter.getMap?.();
+            const current = !!mapAdapter._3dEnabled;
+
+            if (want === current) {
+                if (want && hasMap) {
+                    mapAdapter.reapply3DIfEnabled?.();
+                }
+                return want;
+            }
+
+            if (hasMap) {
+                if (want) {
+                    mapAdapter.enable3D();
+                    return true;
+                }
+                mapAdapter.disable3D();
+                return false;
+            }
+
+            mapAdapter._3dEnabled = want;
+            return want;
+        },
+        reapply3DIfEnabled() {
+            return mapAdapter.reapply3DIfEnabled?.();
         },
         getLayerStyles() {
             return mapAdapter._layerStyles;
@@ -106,6 +129,11 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         fitToLayers(layerIds) {
             return mapAdapter.fitToLayers(layerIds);
         },
+        fitBounds(bounds, options = {}) {
+            const map = mapAdapter.getMap();
+            if (!map) return;
+            return map.fitBounds(bounds, options);
+        },
         getBounds() {
             return mapAdapter.getBounds();
         },
@@ -132,6 +160,12 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         getLayerRecord(layerId) {
             return mapAdapter.dataLayers?.get?.(layerId) ?? null;
+        },
+        syncAnnotationSources(layerId, geojson) {
+            return mapAdapter.syncAnnotationSources?.(layerId, geojson);
+        },
+        compositeAnnotationOverlay(ctx, pixelScale) {
+            return mapAdapter.compositeAnnotationOverlay?.(ctx, pixelScale);
         },
         getLayerIds() {
             return [...(mapAdapter.dataLayers?.keys?.() ?? [])];
@@ -187,6 +221,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         startPointPick(prompt) {
             return mapAdapter.startPointPick(prompt);
         },
+        startContinuousPointPick(prompt, onPoint) {
+            return mapAdapter.startContinuousPointPick?.(prompt, onPoint);
+        },
         startTwoPointPick(prompt1, prompt2) {
             return mapAdapter.startTwoPointPick(prompt1, prompt2);
         },
@@ -220,8 +257,26 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         showTempFeature(geojson, duration) {
             return mapAdapter.showTempFeature(geojson, duration);
         },
+        showQueryResults(layerId, indices) {
+            return mapAdapter.showQueryResults?.(layerId, indices);
+        },
+        clearQueryResults() {
+            return mapAdapter.clearQueryResults?.();
+        },
+        pulseQueryResults(options) {
+            return mapAdapter.pulseQueryResults?.(options);
+        },
+        fitToFeatureIndices(layerId, indices, options) {
+            return mapAdapter.fitToFeatureIndices?.(layerId, indices, options);
+        },
         showRouteMilepostPreview(geojson, duration) {
             return mapAdapter.showRouteMilepostPreview?.(geojson, duration);
+        },
+        showWirelessPlanningPreview(geojson, options) {
+            return mapAdapter.showWirelessPlanningPreview?.(geojson, options);
+        },
+        addCoverageHeatmapLayer(dataset, colorIndex, options) {
+            return mapAdapter.addCoverageHeatmapLayer?.(dataset, colorIndex, options);
         },
         showProjectStationingPreview(geojson, duration) {
             return mapAdapter.showProjectStationingPreview?.(geojson, duration);
@@ -231,6 +286,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         clearTempFeatures() {
             return mapAdapter.clearTempFeatures?.();
+        },
+        popTempFeature() {
+            return mapAdapter.popTempFeature?.();
         },
         hasPopupHits() {
             return Array.isArray(mapAdapter._popupHits) && mapAdapter._popupHits.length > 0;
@@ -269,6 +327,9 @@ export function createMapService({ mapAdapter = mapManager } = {}) {
         },
         stopCameraOrbit() {
             return mapAdapter.stopCameraOrbit();
+        },
+        prepareOrbitView(center, options) {
+            return mapAdapter.prepareOrbitView(center, options);
         },
     };
 }

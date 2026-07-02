@@ -54,5 +54,19 @@
     "description": "Full data prep chain: rename fields, filter wells, buffer zones.",
     "v1Compatible": false,
     "linear": true
+  },
+  {
+    "file": "Sample Fire Stations.json",
+    "title": "Sample fire stations",
+    "description": "Randomly sample 3 fire stations from a larger point layer.",
+    "v1Compatible": true,
+    "linear": true
+  },
+  {
+    "file": "Explode Trail Vertices.json",
+    "title": "Explode trail vertices",
+    "description": "Extract every vertex from a trail line as point features.",
+    "v1Compatible": true,
+    "linear": true
   }
 ]

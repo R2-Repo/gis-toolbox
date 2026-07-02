@@ -56,7 +56,7 @@ function ensureWorker() {
 }
 
 /**
- * @param {'geojson'|'kml'|'kmz'|'shapefile'} op
+ * @param {'geojson'|'gpx'|'kml'|'kmz'|'shapefile'} op
  * @param {string|ArrayBuffer} payload
  * @param {{ transfer?: Transferable[] }} [options]
  */

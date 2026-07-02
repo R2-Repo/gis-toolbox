@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 export function BezierSplineDialog({
     selectionCount = 0,
@@ -13,16 +14,24 @@ export function BezierSplineDialog({
     const [applyTo, setApplyTo] = useState(selectionCount > 0 ? 'selection' : 'layer');
 
     return (
-        <div>
+        <WidgetPanelShell
+            onCancel={onCancel}
+            onRun={() => onApply?.({
+                res: parseInt(resolution, 10),
+                sharp: parseFloat(sharpness),
+                applyTo
+            })}
+            runLabel="Apply"
+            disabled={!isApplyToValid(applyTo, selectionCount)}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
                 layerName={layerName}
                 onChange={setApplyTo}
             />
-            <p>Smooth line features into curved bezier splines.</p>
             <div className="form-group">
-                <label>Resolution (higher = smoother, default 10000)</label>
+                <label>Resolution</label>
                 <input
                     type="number"
                     value={resolution}
@@ -32,7 +41,7 @@ export function BezierSplineDialog({
                 />
             </div>
             <div className="form-group">
-                <label>Sharpness (0-1, higher = sharper curves)</label>
+                <label>Sharpness (0–1)</label>
                 <input
                     type="number"
                     value={sharpness}
@@ -42,20 +51,6 @@ export function BezierSplineDialog({
                     onChange={(e) => setSharpness(e.target.value)}
                 />
             </div>
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!isApplyToValid(applyTo, selectionCount)}
-                    onClick={() => onApply?.({
-                        res: parseInt(resolution, 10),
-                        sharp: parseFloat(sharpness),
-                        applyTo
-                    })}
-                >
-                    Apply
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

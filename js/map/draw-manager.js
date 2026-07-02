@@ -6,6 +6,13 @@
 import bus from '../core/event-bus.js';
 import logger from '../core/logger.js';
 import mapService from './map-service.js';
+import { showModal } from '../ui/modals.js';
+import {
+    ANNOTATION_TYPES,
+    DEFAULT_ANNOTATION_STYLE,
+    isAnnotationFeature,
+    normalizeAnnotationProperties
+} from './map-annotations.js';
 const DRAW_STYLE = {
     lineColor: '#01bcdd',
     lineWidth: 3,
@@ -63,6 +70,12 @@ class DrawManager {
         this._sectorStartAngle = null;
         this._sectorPreviewSourceId = null;
         this._sectorPreviewLayerIds = [];
+        this._calloutAnchor = null;
+        this._calloutPreviewSourceId = null;
+        this._calloutPreviewLayerIds = [];
+        this._lastAnnotationStyle = { ...DEFAULT_ANNOTATION_STYLE };
+        this._annotationDialogOpen = false;
+        this._selectDblClickHandler = null;
     }
 
     /** Get the MapLibre map instance */
@@ -133,6 +146,7 @@ class DrawManager {
         const showFinish = (this._tool === 'line' || this._tool === 'polygon') && this._vertices.length >= minVerts;
         const showUndo = (this._tool === 'line' || this._tool === 'polygon') && this._vertices.length > 0;
         const showDelete = this._selectedFeatureIndex !== null;
+        const showEdit = this._selectedFeatureIndex !== null && isAnnotationFeature(this._editFeatureRef);
         return {
             layerName: this._toolbarLayerName,
             activeTool: this._tool,
@@ -140,6 +154,7 @@ class DrawManager {
             showFinish,
             showUndo,
             showDelete,
+            showEdit,
             onClose: () => this.hideToolbar(),
             onToggleTool: (tool) => {
                 if (this._tool === tool) {
@@ -150,6 +165,7 @@ class DrawManager {
             },
             onUndo: () => this._undoLastVertex(),
             onDelete: () => this._deleteSelected(),
+            onEdit: () => this._editSelectedAnnotation(),
             onFinish: () => this._finishDraw()
         };
     }
@@ -189,7 +205,9 @@ class DrawManager {
             this.map.getCanvas().style.cursor = '';
             this._setHint('Click a feature to edit. Drag vertices to reshape.');
             this._clickHandler = (e) => this._onSelectClick(e);
+            this._selectDblClickHandler = (e) => this._onSelectDblClick(e);
             this.map.on('click', this._clickHandler);
+            this.map.on('dblclick', this._selectDblClickHandler);
             this._escHandler = (e) => {
                 if (e.key === 'Escape') { this._clearEditSelection(); this.cancelDraw(); }
                 if ((e.key === 'Delete' || e.key === 'Backspace') && this._selectedFeatureIndex !== null) {
@@ -198,6 +216,34 @@ class DrawManager {
             };
             document.addEventListener('keydown', this._escHandler);
             logger.debug('Draw', 'Started tool: select');
+            return;
+        }
+
+        // Text label — click to place, then enter text in dialog
+        if (tool === 'text') {
+            this.map.getCanvas().style.cursor = 'crosshair';
+            this._setHint('Click on the map to place a text label.');
+            this._clickHandler = (e) => this._onTextClick(e);
+            this._escHandler = (e) => { if (e.key === 'Escape') this.cancelDraw(); };
+            this.map.on('click', this._clickHandler);
+            document.addEventListener('keydown', this._escHandler);
+            logger.debug('Draw', 'Started tool: text');
+            return;
+        }
+
+        // Callout — click anchor, then click label position
+        if (tool === 'callout') {
+            this._calloutAnchor = null;
+            this._removeCalloutPreview();
+            this.map.getCanvas().style.cursor = 'crosshair';
+            this._setHint('Click the point on the map to anchor the callout.');
+            this._clickHandler = (e) => this._onCalloutClick(e);
+            this._moveHandler = (e) => this._onCalloutMove(e);
+            this._escHandler = (e) => { if (e.key === 'Escape') this.cancelDraw(); };
+            this.map.on('click', this._clickHandler);
+            this.map.on('mousemove', this._moveHandler);
+            document.addEventListener('keydown', this._escHandler);
+            logger.debug('Draw', 'Started tool: callout');
             return;
         }
 
@@ -310,8 +356,10 @@ class DrawManager {
         this._removeRectPreview();
         this._removeCirclePreview();
         this._removeSectorPreview();
+        this._removeCalloutPreview();
         this._rectCorner1 = null;
         this._circleCenter = null;
+        this._calloutAnchor = null;
         this._sectorCenter = null;
         this._sectorRadius = null;
         this._sectorStartAngle = null;
@@ -337,6 +385,7 @@ class DrawManager {
         if (this._clickHandler) { this.map?.off('click', this._clickHandler); this._clickHandler = null; }
         if (this._moveHandler) { this.map?.off('mousemove', this._moveHandler); this._moveHandler = null; }
         if (this._dblClickHandler) { this.map?.off('dblclick', this._dblClickHandler); this._dblClickHandler = null; }
+        if (this._selectDblClickHandler) { this.map?.off('dblclick', this._selectDblClickHandler); this._selectDblClickHandler = null; }
         if (this._contextHandler) { this.map?.off('contextmenu', this._contextHandler); this._contextHandler = null; }
         if (this._escHandler) { document.removeEventListener('keydown', this._escHandler); this._escHandler = null; }
         if (this._enterHandler) { document.removeEventListener('keydown', this._enterHandler); this._enterHandler = null; }
@@ -617,7 +666,46 @@ class DrawManager {
         mapService.highlightFeature(this._targetLayerId, featureIndex);
         this._showEditVertices(featureIndex);
         this._updateActionButtons();
-        this._setHint(`Feature selected. Drag vertices to reshape, or press Delete.`);
+        const info = mapService.getLayerRecord(this._targetLayerId);
+        const feature = info?.geojson?.features?.find((f) => f.properties?._featureIndex === featureIndex);
+        this._editFeatureRef = feature || null;
+        const hint = isAnnotationFeature(feature)
+            ? 'Label selected. Drag to move, Edit to change text/style, or Delete.'
+            : 'Feature selected. Drag vertices to reshape, or press Delete.';
+        this._setHint(hint);
+    }
+
+    _onSelectDblClick(e) {
+        if (this._tool !== 'select') return;
+        if (e.originalEvent) {
+            e.originalEvent.preventDefault();
+            e.originalEvent.stopPropagation();
+            e.originalEvent._drawHandled = true;
+        }
+        e._drawHandled = true;
+        if (this._selectedFeatureIndex !== null && isAnnotationFeature(this._editFeatureRef)) {
+            this._editSelectedAnnotation();
+        }
+    }
+
+    _editSelectedAnnotation() {
+        if (this._selectedFeatureIndex === null || !isAnnotationFeature(this._editFeatureRef)) return;
+        const feature = this._editFeatureRef;
+        const mode = feature.properties._annotationType === ANNOTATION_TYPES.CALLOUT ? 'callout' : 'text';
+        void this._openAnnotationDialog({
+            mode,
+            initial: { ...feature.properties },
+            onConfirm: (props) => {
+                const annotationType = feature.properties._annotationType;
+                Object.assign(feature.properties, normalizeAnnotationProperties(props, annotationType));
+                this._syncLayerData();
+                bus.emit('draw:featureEdited', {
+                    layerId: this._targetLayerId,
+                    featureIndex: this._selectedFeatureIndex
+                });
+                this._setHint('Label updated.');
+            }
+        });
     }
 
     _clearEditSelection() {
@@ -656,9 +744,8 @@ class DrawManager {
 
             marker.on('drag', () => {
                 const lngLat = marker.getLngLat();
-                this._applyVertexMove(feature.geometry, idx, [lngLat.lng, lngLat.lat]);
-                const src = this.map.getSource(info.sourceId);
-                if (src) src.setData(info.geojson);
+                this._applyVertexMove(feature.geometry, idx, [lngLat.lng, lngLat.lat], feature);
+                this._syncLayerData();
             });
 
             marker.on('dragend', () => {
@@ -682,13 +769,19 @@ class DrawManager {
         }
     }
 
-    _applyVertexMove(geometry, vertexIndex, newCoord) {
+    _applyVertexMove(geometry, vertexIndex, newCoord, feature = null) {
         switch (geometry.type) {
             case 'Point':
                 geometry.coordinates = newCoord;
                 break;
             case 'LineString':
                 geometry.coordinates[vertexIndex] = newCoord;
+                if (feature?.properties?._annotationType === ANNOTATION_TYPES.CALLOUT) {
+                    const coords = geometry.coordinates;
+                    const last = coords[coords.length - 1];
+                    feature.properties.labelLng = last[0];
+                    feature.properties.labelLat = last[1];
+                }
                 break;
             case 'Polygon':
                 geometry.coordinates[0][vertexIndex] = newCoord;
@@ -700,6 +793,14 @@ class DrawManager {
                 geometry.coordinates[vertexIndex] = newCoord;
                 break;
         }
+    }
+
+    _syncLayerData() {
+        const info = mapService.getLayerRecord(this._targetLayerId);
+        if (!info) return;
+        const src = this.map.getSource(info.sourceId);
+        if (src) src.setData(info.geojson);
+        mapService.syncAnnotationSources(this._targetLayerId, info.geojson);
     }
 
     _deleteSelected() {
@@ -962,6 +1063,208 @@ class DrawManager {
     // ============================
     // Feature creation
     // ============================
+
+    // ============================
+    // Text & callout annotations
+    // ============================
+
+    _onTextClick(e) {
+        if (e.originalEvent) {
+            e.originalEvent.stopPropagation();
+            e.originalEvent._drawHandled = true;
+        }
+        e._drawHandled = true;
+        if (this._finishing || this._annotationDialogOpen) return;
+
+        const coord = [e.lngLat.lng, e.lngLat.lat];
+        this._finishing = true;
+        void this._openAnnotationDialog({
+            mode: 'text',
+            initial: { ...this._lastAnnotationStyle },
+            onConfirm: (props) => {
+                this._createAnnotationFeature(ANNOTATION_TYPES.TEXT, {
+                    type: 'Point',
+                    coordinates: coord
+                }, props);
+            },
+            onCancel: () => {
+                this._finishing = false;
+                this._setHint('Click on the map to place a text label.');
+            }
+        });
+    }
+
+    _onCalloutClick(e) {
+        if (e.originalEvent) {
+            e.originalEvent.stopPropagation();
+            e.originalEvent._drawHandled = true;
+        }
+        e._drawHandled = true;
+        if (this._finishing || this._annotationDialogOpen) return;
+
+        const coord = [e.lngLat.lng, e.lngLat.lat];
+
+        if (!this._calloutAnchor) {
+            this._calloutAnchor = coord;
+            this._setHint('Move cursor and click where the label should go.');
+            return;
+        }
+
+        const anchor = this._calloutAnchor;
+        const label = coord;
+        this._calloutAnchor = null;
+        this._removeCalloutPreview();
+        this._finishing = true;
+
+        void this._openAnnotationDialog({
+            mode: 'callout',
+            initial: { ...this._lastAnnotationStyle },
+            onConfirm: (props) => {
+                this._createAnnotationFeature(ANNOTATION_TYPES.CALLOUT, {
+                    type: 'LineString',
+                    coordinates: [anchor, label]
+                }, props);
+            },
+            onCancel: () => {
+                this._finishing = false;
+                this._setHint('Click the point on the map to anchor the callout.');
+            }
+        });
+    }
+
+    _onCalloutMove(e) {
+        if (!this._calloutAnchor) return;
+        this._updateCalloutPreview(this._calloutAnchor, [e.lngLat.lng, e.lngLat.lat]);
+    }
+
+    _updateCalloutPreview(anchor, cursor) {
+        this._removeCalloutPreview();
+        const srcId = _nextDrawId('callout-preview');
+        this._calloutPreviewSourceId = srcId;
+        this.map.addSource(srcId, {
+            type: 'geojson',
+            data: {
+                type: 'Feature',
+                geometry: { type: 'LineString', coordinates: [anchor, cursor] }
+            }
+        });
+        const lineId = srcId + '-line';
+        this.map.addLayer({
+            id: lineId,
+            type: 'line',
+            source: srcId,
+            paint: {
+                'line-color': DRAW_STYLE.lineColor,
+                'line-width': 2,
+                'line-opacity': 0.85,
+                'line-dasharray': [4, 4]
+            }
+        });
+        const anchorId = srcId + '-anchor';
+        this.map.addLayer({
+            id: anchorId,
+            type: 'circle',
+            source: srcId,
+            filter: ['==', ['geometry-type'], 'Point'],
+            paint: {
+                'circle-radius': 4,
+                'circle-color': DRAW_STYLE.lineColor,
+                'circle-stroke-color': '#fff',
+                'circle-stroke-width': 1
+            }
+        });
+        this._calloutPreviewLayerIds = [lineId, anchorId];
+    }
+
+    _removeCalloutPreview() {
+        for (const lid of this._calloutPreviewLayerIds) {
+            if (this.map?.getLayer(lid)) this.map.removeLayer(lid);
+        }
+        this._calloutPreviewLayerIds = [];
+        if (this._calloutPreviewSourceId) {
+            if (this.map?.getSource(this._calloutPreviewSourceId)) {
+                this.map.removeSource(this._calloutPreviewSourceId);
+            }
+            this._calloutPreviewSourceId = null;
+        }
+    }
+
+    async _openAnnotationDialog({ mode, initial, onConfirm, onCancel }) {
+        if (this._annotationDialogOpen) return;
+        this._annotationDialogOpen = true;
+        const rootId = `text-ann-dialog-${Date.now()}`;
+        const title = mode === 'callout' ? 'Callout label' : 'Text label';
+
+        await new Promise((resolve) => {
+            showModal(title, `<div id="${rootId}"></div>`, {
+                width: '380px',
+                onMount: async (overlay, close) => {
+                    const root = overlay.querySelector(`#${rootId}`);
+                    if (!root) {
+                        resolve();
+                        return;
+                    }
+                    const { mountTextAnnotationDialog } = await import('../../react/map/mountTextAnnotationDialog.jsx');
+                    let mounted = null;
+                    const finish = (result) => {
+                        this._annotationDialogOpen = false;
+                        close();
+                        mounted?.unmount?.();
+                        resolve(result);
+                    };
+                    mounted = mountTextAnnotationDialog(root, {
+                        mode,
+                        initial,
+                        onConfirm: (props) => {
+                            this._lastAnnotationStyle = { ...props };
+                            onConfirm?.(props);
+                            finish(props);
+                        },
+                        onCancel: () => {
+                            onCancel?.();
+                            finish(null);
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    _createAnnotationFeature(annotationType, geometry, styleProps) {
+        this._finishing = true;
+        const properties = normalizeAnnotationProperties(styleProps, annotationType);
+        if (annotationType === ANNOTATION_TYPES.CALLOUT && geometry.type === 'LineString') {
+            const coords = geometry.coordinates;
+            const last = coords[coords.length - 1];
+            properties.labelLng = last[0];
+            properties.labelLat = last[1];
+        }
+
+        const feature = {
+            type: 'Feature',
+            properties,
+            geometry
+        };
+
+        this._clearPreview();
+        this._removeCalloutPreview();
+        this._calloutAnchor = null;
+        this._vertices = [];
+
+        bus.emit('draw:featureCreated', {
+            layerId: this._targetLayerId,
+            feature
+        });
+
+        logger.debug('Draw', `Created ${annotationType} annotation`);
+
+        const hint = annotationType === ANNOTATION_TYPES.CALLOUT
+            ? 'Callout placed! Click to anchor another callout.'
+            : 'Label placed! Click again to add another.';
+        this._setHint(hint);
+        this.map.getCanvas().style.cursor = 'crosshair';
+        setTimeout(() => { this._finishing = false; }, 300);
+    }
 
     _finishDraw() {
         if (this._tool === 'line' && this._vertices.length >= 2) {

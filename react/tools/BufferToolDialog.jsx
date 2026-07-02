@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApplyToSelector, isApplyToValid } from './ApplyToSelector.jsx';
+import { WidgetPanelShell } from '../widgets/shared/WidgetPanelShell.jsx';
 
 const UNIT_OPTIONS = ['feet', 'meters', 'miles', 'kilometers'];
 
@@ -18,7 +19,14 @@ export function BufferToolDialog({
     const canApply = isApplyToValid(applyTo, selectionCount);
 
     return (
-        <div>
+        <WidgetPanelShell
+            status={showLargeDatasetWarning ? 'Large dataset — this may be slow.' : ''}
+            statusTone="muted"
+            onCancel={onCancel}
+            onRun={() => onApply?.({ dist: parseFloat(distance), units, applyTo })}
+            runLabel="Buffer"
+            disabled={!canApply}
+        >
             <ApplyToSelector
                 selectionCount={selectionCount}
                 totalCount={totalCount}
@@ -45,19 +53,6 @@ export function BufferToolDialog({
                     ))}
                 </select>
             </div>
-            {showLargeDatasetWarning ? (
-                <div className="warning-box">Large dataset — this may be slow.</div>
-            ) : null}
-            <div className="modal-footer">
-                <button className="btn btn-secondary cancel-btn" onClick={() => onCancel?.()}>Cancel</button>
-                <button
-                    className="btn btn-primary apply-btn"
-                    disabled={!canApply}
-                    onClick={() => onApply?.({ dist: parseFloat(distance), units, applyTo })}
-                >
-                    Buffer
-                </button>
-            </div>
-        </div>
+        </WidgetPanelShell>
     );
 }

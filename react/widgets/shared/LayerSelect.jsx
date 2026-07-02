@@ -4,12 +4,20 @@ export function LayerSelect({
     onChange,
     layers = [],
     placeholder = '- select layer -',
-    formatOption = (layer) => `${layer.name} (${layer.featureCount})`,
-    className = ''
+    formatOption = (layer) => `${layer.name} (${layer.featureCount ?? layer.count ?? 0})`,
+    className = '',
+    headerExtra = null
 }) {
     return (
         <div className={['form-group', className].filter(Boolean).join(' ')}>
-            <label>{label}</label>
+            {headerExtra ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <label style={{ marginBottom: 0, flex: 1 }}>{label}</label>
+                    {headerExtra}
+                </div>
+            ) : (
+                <label>{label}</label>
+            )}
             <select value={value} onChange={(e) => onChange?.(e.target.value)}>
                 <option value="">{placeholder}</option>
                 {layers.map((layer) => (

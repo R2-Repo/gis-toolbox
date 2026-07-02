@@ -10,7 +10,7 @@ import {
     setActiveLayer, toggleLayerVisibility, reorderLayer, setUIState, toggleAGOLCompat
 } from '../core/state.js';
 import { mergeDatasets, getSelectedFields, tableToSpatial, createSpatialDataset, createTableDataset, analyzeSchema, analyzeTableSchema, isSpatialLayer } from '../core/data-model.js';
-import { isLayerDisplayReady, layerCrsWarning } from '../crs/layer-crs.js';
+import { isLayerDisplayReady, layerCrsWarning, getLayerCrs, resolveReprojectFromCrs } from '../crs/layer-crs.js';
 import { importFile, importFiles } from '../import/importer.js';
 import { cancelWorkerParse } from '../import/import-parse-service.js';
 import { convertSpatialDatasetToWorkspace } from '../import/workspace-import.js';
@@ -35,22 +35,21 @@ import { guardFilesBeforeImport } from '../import/import-guard.js';
 import { assessImportRoute, shouldConvertToWorkspace, arcgisShouldUseWorkspace } from '../import/import-routing.js';
 import { ErrorCategory } from '../core/error-handler.js';
 import { getAvailableFormats, exportDataset, exportMultiLayerKMZFile, exportMultiLayerKMLFile, setExportMapManager } from '../export/exporter.js';
+import { isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import mapService from '../map/map-service.js';
 import { isSmartStyleActive } from '../map/style-engine.js';
 import dualScreenCoordinator from '../dual-screen/coordinator.js';
+import { getMapViewContextForUi } from '../dual-screen/map-view-context.js';
 import { installDualScreenPrimaryHandlers } from '../dual-screen/primary-handlers.js';
 import {
     POPUP_BLOCKED_MESSAGE,
     RELOAD_REMINDER_MESSAGE,
     consumeDualScreenReloadReminder
 } from '../dual-screen/storage-hint.js';
-import {
-    applyDualScreenDocumentLayout,
-    syncDualScreenHeaderButton
-} from '../dual-screen/layout.js';
 
 import { showToast, showErrorToast } from '../ui/toast.js';
 import { showModal, confirm, confirmArcgisLargeImport, showProgressModal } from '../ui/modals.js';
+import { openToolDialog } from '../ui/open-tool-dialog.js';
 import * as transforms from '../dataprep/transforms.js';
 import { applyTemplate } from '../dataprep/template-builder.js';
 import { saveSnapshot, undo as undoHistory, redo as redoHistory, getHistoryState } from '../dataprep/transform-history.js';
@@ -61,6 +60,7 @@ import ARCGIS_ENDPOINTS from '../arcgis/endpoints.js';
 import { checkAGOLCompatibility, applyAGOLFixes } from '../agol/compatibility.js';
 import * as gisTools from './gis-tools.js';
 import { convertFeatureCoords } from './coordinates.js';
+import { guessCoordinateFields } from '../import/coord-detect.js';
 import { findFirstLineStringFeature, listLineStringFeatures } from './line-geojson.js';
 
 import drawManager from '../map/draw-manager.js';
@@ -81,6 +81,13 @@ import { loadPaletteFavorites, savePaletteFavorites } from '../map/palette-store
 import { getWorkspaceLayer, exportWorkspaceLayerBundle } from '../workspace/workspace-store.js';
 import { WorkflowStore } from '../workflow/workflow-store.js';
 import { buildWidgetActions } from '../widgets/registry.js';
+import {
+    loadWidgetStore,
+    remapWidgetLayerIds,
+    serializeWidgetStore,
+    getWidgetsToRestore,
+    restoreOpenWidget
+} from '../widgets/widget-state-store.js';
 import { createWidgetContext } from '../widgets/widget-context.js';
 import { openImportStationTable } from '../widgets/project-stationing/controller.js';
 import { isProjectStationingCenterline } from '../widgets/project-stationing/route-profile.js';
@@ -189,17 +196,7 @@ function _timeAgo(ts) {
 // ============================
 
 function _getMapChromeSnapshot() {
-    const map = mapService.getMap();
-    let viewport = null;
-    if (map) {
-        const center = map.getCenter();
-        viewport = {
-            center: [center.lng, center.lat],
-            zoom: map.getZoom(),
-            bearing: map.getBearing?.() ?? 0,
-            pitch: map.getPitch?.() ?? 0
-        };
-    }
+    const { viewport } = getMapViewContextForUi(mapService, dualScreenCoordinator);
     return {
         basemap: mapService.getCurrentBasemap(),
         is3d: mapService.is3DEnabled(),
@@ -267,19 +264,28 @@ async function _addRestoredDatasets(datasets, styles, activeLayerId, { replaceSt
 async function applyProjectKitSnapshot(snapshot, { sections, mode = 'replace' }) {
     const selected = PROJECT_KIT_SECTIONS.filter((key) => sections.includes(key));
     sessionStore.pauseSessionSave();
+    let layerIdMap = null;
     try {
         if (selected.includes('layers') && snapshot.layers) {
             if (mode === 'replace') {
                 await _clearLayersForKitReplace();
             }
-            const { datasets, styles, activeLayerId } = await prepareLayersFromKitSection({
+            const { datasets, styles, activeLayerId, idMap } = await prepareLayersFromKitSection({
                 layersSection: snapshot.layers,
                 mode,
                 existingLayerIds: new Set(getLayers().map((layer) => layer.id))
             });
+            layerIdMap = idMap;
             await _addRestoredDatasets(datasets, styles, activeLayerId, {
                 replaceStyles: mode === 'replace'
             });
+        }
+
+        if (selected.includes('widgets') && snapshot.widgets) {
+            loadWidgetStore(snapshot.widgets);
+            if (layerIdMap?.size) {
+                remapWidgetLayerIds(layerIdMap);
+            }
         }
 
         if (selected.includes('map') && snapshot.map) {
@@ -323,6 +329,13 @@ async function applyProjectKitSnapshot(snapshot, { sections, mode = 'replace' })
         if (selected.includes('layers')) {
             mapService.fitToAll();
         }
+
+        if (selected.includes('widgets')) {
+            const widgetsToRestore = getWidgetsToRestore();
+            for (const entry of widgetsToRestore) {
+                await restoreOpenWidget(entry.type, getWidgetContext());
+            }
+        }
     } finally {
         sessionStore.resumeSessionSave(true);
     }
@@ -354,6 +367,7 @@ export async function exportProjectKit(options = {}) {
                     nodeCache: _collectWorkflowNodeCache(wf.engine)
                 } : null,
                 preferences: { paletteFavorites: loadPaletteFavorites() },
+                widgets: serializeWidgetStore(),
                 exportWorkspaceLayerBundle
             });
             const blob = await packProjectKit(snapshot, JSZip, t);
@@ -361,6 +375,37 @@ export async function exportProjectKit(options = {}) {
             showToast('Toolbox Export saved.', 'success');
         });
     });
+}
+
+export async function exportMapView(format) {
+    try {
+        const mod = await import('../map/map-export.js');
+        if (format === 'gif') {
+            if (dualScreenCoordinator?.isActive) {
+                showToast('Map is in the Dual Screen window — export from that window.', 'error');
+                return;
+            }
+            const { pickOrbitGifSettingsModal } = await import('../../react/tools/mountOrbitGifDialog.jsx');
+            const settings = await pickOrbitGifSettingsModal(mapService, { getActiveLayer });
+            if (!settings) return;
+            showToast('Recording orbit GIF…', 'info');
+            const result = await mod.exportOrbitGif(mapService, settings);
+            showToast('GIF saved.', 'success');
+            return result;
+        }
+        if (mod.willUseHighResExport(mapService)) {
+            showToast('Exporting high-resolution map…', 'info');
+        }
+        const result = await mod.exportMapView(mapService, format, {
+            blockWhenDualScreen: true,
+            dualScreenCoordinator
+        });
+        showToast(`${format.toUpperCase()} saved.`, 'success');
+        return result;
+    } catch (err) {
+        showToast(err.message || 'Map export failed.', 'error');
+        throw err;
+    }
 }
 
 export async function importProjectKit(initialFile) {
@@ -402,6 +447,7 @@ export async function importProjectKit(initialFile) {
             if (dialogResult.sections.includes('workflow') && summary.hasWorkflow) parts.push('pipeline');
             if (dialogResult.sections.includes('map') && summary.hasMap) parts.push('map settings');
             if (dialogResult.sections.includes('preferences') && summary.hasPreferences) parts.push('preferences');
+            if (dialogResult.sections.includes('widgets') && summary.hasWidgets) parts.push('widget state');
             showToast(`Toolbox project restored${parts.length ? ` (${parts.join(', ')})` : ''}.`, 'success');
             logger.info('ProjectKit', 'Import complete', { mode: dialogResult.mode, sections: dialogResult.sections });
         });
@@ -532,13 +578,7 @@ export function buildMapContextMenuItems(payload) {
             icon: '🔍',
             label: 'Zoom to layer',
             action: () => {
-                const ll = mapService.getLayerRecord(layerId);
-                if (ll?.geojson) {
-                    try {
-                        const bb = turf.bbox(ll.geojson);
-                        mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
-                    } catch (_) { /* ignore */ }
-                }
+                zoomToLayer(layerId);
             }
         });
         items.push({
@@ -556,9 +596,7 @@ export function buildMapContextMenuItems(payload) {
 
 export function getRightPanelSnapshot() {
     const layer = getActiveLayer();
-    const map = mapService.getMap();
-    const mapZoom = map?.getZoom?.() ?? 7;
-    const mapLatitude = map?.getCenter?.()?.lat ?? 0;
+    const { zoom: mapZoom, latitude: mapLatitude } = getMapViewContextForUi(mapService, dualScreenCoordinator);
 
     if (!layer) {
         return {
@@ -606,8 +644,7 @@ export function handleLayerScaleRangeChange(layerId, range) {
     };
     updateLayer(layerId, patch);
 
-    const map = mapService.getMap();
-    const latitude = map?.getCenter?.()?.lat ?? 0;
+    const { latitude } = getMapViewContextForUi(mapService, dualScreenCoordinator);
     mapService.setLayerScaleRange(layerId, patch, latitude);
     refreshUI();
 }
@@ -764,6 +801,10 @@ async function _addImportedDatasets(datasets, importOpts = {}) {
             mapService.addLayer(ds, layerIdx, { fit: false });
         }
         ids.push(ds.id);
+    }
+
+    if (dualScreenCoordinator.isActive) {
+        dualScreenCoordinator.syncLayersChanged();
     }
 
     const crsWarnings = datasets.filter((ds) => isSpatialLayer(ds) && !isLayerDisplayReady(ds));
@@ -1192,7 +1233,7 @@ export function setupAppWiring() {
     _importInputEl = document.createElement('input');
     _importInputEl.type = 'file';
     _importInputEl.multiple = true;
-    _importInputEl.accept = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.zip,.xml,.gis-toolbox,.gtbx';
+    _importInputEl.accept = '.geojson,.json,.csv,.tsv,.txt,.xlsx,.xls,.kml,.kmz,.gpx,.zip,.xml,.gis-toolbox,.gtbx';
     _importInputEl.setAttribute('aria-label', 'Import files');
     _importInputEl.style.cssText = 'opacity:0;position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
     document.body.appendChild(_importInputEl);
@@ -1256,7 +1297,13 @@ export function setupAppWiring() {
                 refreshUI();
             }
         });
+        _workflowOverlay.warmup();
     }
+
+    document.addEventListener('click', (event) => {
+        if (!closestFromEvent(event, '#btn-workflow')) return;
+        _workflowOverlay?.toggle();
+    });
     
     setupDualScreenMode();
 
@@ -1442,17 +1489,7 @@ function setupDualScreenMode() {
             refreshUI();
         },
         zoomToLayer: (layerId) => {
-            if (dualScreenCoordinator.isActive) {
-                dualScreenCoordinator.broadcastFit('fitLayers', { layerIds: [layerId] });
-                return;
-            }
-            const layer = mapService.getLayerRecord(layerId);
-            if (layer?.geojson) {
-                try {
-                    const bb = turf.bbox(layer.geojson);
-                    mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
-                } catch (_) { /* ignore */ }
-            }
+            zoomToLayer(layerId);
         },
         setActiveLayer: (id) => { setActiveLayer(id); refreshUI(); },
         onCoordSearchAddNew: _coordSearchAddNew,
@@ -1464,14 +1501,6 @@ function setupDualScreenMode() {
     });
 
     dualScreenCoordinator.onStateChange((active) => {
-        applyDualScreenLayout(active);
-        syncDualScreenHeaderButton(btn, active);
-        document.querySelectorAll('[data-dual-screen-toggle]').forEach(el => {
-            el.classList.toggle('active', active);
-            if (el.id === 'wf-dual-screen') {
-                el.textContent = active ? '???? Exit Dual Screen' : '???? Dual Screen';
-            }
-        });
         if (active && _fenceBbox) {
             dualScreenCoordinator.setFenceBbox(_fenceBbox);
             setTimeout(() => {
@@ -1511,10 +1540,6 @@ function setupDualScreenMode() {
         && consumeDualScreenReloadReminder(sessionStorage, window._dualScreenReloadState ||= {})) {
         showToast(RELOAD_REMINDER_MESSAGE, 'info', { duration: 8000 });
     }
-}
-
-function applyDualScreenLayout(active) {
-    applyDualScreenDocumentLayout(active);
 }
 
 // ============================
@@ -1565,13 +1590,9 @@ export function toggleLayerVisibilityAndRender(id) {
 }
 
 export function zoomToLayer(id) {
-    const layer = mapService.getLayerRecord(id);
-    if (layer && layer.geojson) {
-        try {
-            const bb = turf.bbox(layer.geojson);
-            mapService.getMap()?.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], { padding: 30 });
-        } catch (_) {}
-    }
+    const layer = getLayers().find((l) => l.id === id);
+    if (!layer?.geojson?.features?.length && !isWorkspaceLayer(layer)) return;
+    mapService.fitToLayers([id]);
 }
 
 export async function removeLayerWithConfirm(id) {
@@ -2146,7 +2167,7 @@ async function openBuffer() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `buffer-tool-react-${Date.now()}`;
-        showModal('Buffer', `<div id="${rootId}"></div>`, {
+        openToolDialog('Buffer', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2184,17 +2205,30 @@ async function openReproject() {
     const layer = await requireSpatialLayer();
     if (!layer) return;
 
+    const displayReady = isLayerDisplayReady(layer);
+    const crsWarning = displayReady ? '' : layerCrsWarning(layer);
+
+    let sourceCrs = getLayerCrs(layer);
+    let sourceCrsError = '';
+    try {
+        sourceCrs = resolveReprojectFromCrs(layer, layer.geojson);
+    } catch (err) {
+        sourceCrsError = err?.message || 'Could not determine the layer coordinate system.';
+    }
+
     const rootId = `reproject-tool-react-${Date.now()}`;
-    showModal('Reproject Layer', `<div id="${rootId}"></div>`, {
+    openToolDialog(displayReady ? 'Reproject Layer' : 'Fix Map Display', rootId, {
         onMount: async (overlay, close) => {
             const root = overlay.querySelector(`#${rootId}`);
             if (!root) return;
 
             const { mountReprojectDialog } = await import('../../react/tools/mountReprojectDialog.jsx');
-            const { getLayerCrs } = await import('../crs/layer-crs.js');
             const mounted = mountReprojectDialog(root, {
                 layerName: layer.name,
-                sourceCrs: getLayerCrs(layer),
+                sourceCrs,
+                displayReady,
+                crsWarning,
+                sourceCrsError,
                 onCancel: () => close(),
                 onApply: async ({ fromCrs, toCrs, name }) => {
                     close();
@@ -2225,7 +2259,7 @@ async function openSimplify() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `simplify-tool-react-${Date.now()}`;
-        showModal('Simplify Geometries', `<div id="${rootId}"></div>`, {
+        openToolDialog('Simplify Geometries', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2265,7 +2299,7 @@ async function openClip() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `clip-extent-react-${Date.now()}`;
-        showModal('Clip to Current Map Extent', `<div id="${rootId}"></div>`, {
+        openToolDialog('Clip to Current Map Extent', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2431,7 +2465,7 @@ async function openDistanceTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `distance-tool-react-${Date.now()}`;
-        showModal('Measure Distance', `<div id="${rootId}"></div>`, {
+        openToolDialog('Measure Distance', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2459,7 +2493,7 @@ async function openBearingTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `bearing-tool-react-${Date.now()}`;
-        showModal('Measure Bearing', `<div id="${rootId}"></div>`, {
+        openToolDialog('Measure Bearing', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2494,7 +2528,7 @@ async function openDestinationTool() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `destination-tool-react-${Date.now()}`;
-        showModal('Find Destination Point', `<div id="${rootId}"></div>`, {
+        openToolDialog('Find Destination Point', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2525,7 +2559,7 @@ async function openAlongTool() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `along-tool-react-${Date.now()}`;
-        showModal('Point Along Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Point Along Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2572,7 +2606,7 @@ async function openPointToLineDistanceTool() {
 
     
         const rootId = `ptl-distance-react-${Date.now()}`;
-        showModal('Point to Line Distance', `<div id="${rootId}"></div>`, {
+        openToolDialog('Point to Line Distance', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2614,7 +2648,7 @@ async function openBboxClip() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `bbox-clip-react-${Date.now()}`;
-        showModal('BBox Clip', `<div id="${rootId}"></div>`, {
+        openToolDialog('BBox Clip', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2653,7 +2687,7 @@ async function openBezierSpline() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `bezier-spline-react-${Date.now()}`;
-        showModal('Bezier Spline', `<div id="${rootId}"></div>`, {
+        openToolDialog('Bezier Spline', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2688,7 +2722,7 @@ async function openPolygonSmooth() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `polygon-smooth-react-${Date.now()}`;
-        showModal('Polygon Smooth', `<div id="${rootId}"></div>`, {
+        openToolDialog('Polygon Smooth', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2726,7 +2760,7 @@ async function openLineOffset() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `line-offset-react-${Date.now()}`;
-        showModal('Line Offset', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Offset', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2760,7 +2794,7 @@ async function openLineSliceAlong() {
 
     
         const rootId = `line-slice-along-react-${Date.now()}`;
-        showModal('Line Slice Along', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Slice Along', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2796,7 +2830,7 @@ async function openLineSlice() {
 
     
         const rootId = `line-slice-react-${Date.now()}`;
-        showModal('Line Slice Between Points', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Slice Between Points', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2825,30 +2859,6 @@ async function openLineSlice() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-
-    showModal('Line Slice Between Points', '<p>Click two points on the map. The section of the line between those points (snapped to nearest vertices) will be extracted.</p>', {
-        footer: '<button class="btn btn-secondary cancel-btn">Cancel</button><button class="btn btn-primary apply-btn">Pick Points on Map</button>',
-        onMount: (overlay, close) => {
-            overlay.querySelector('.cancel-btn')?.addEventListener('click', () => close());
-            overlay.querySelector('.apply-btn')?.addEventListener('click', async () => {
-                close();
-                const pts = await mapService.startTwoPointPick('Click the start point along the line', 'Click the end point along the line');
-                if (!pts) return;
-                const work = getWorkingFeatures(layer);
-                const line = findFirstLineStringFeature(work.geojson);
-                if (!line) return showToast('No LineString or MultiLineString found', 'warning');
-                try {
-                    const sliced = gisTools.lineSlice(turf.point(pts[0]), turf.point(pts[1]), line);
-                    sliced.properties = { ...line.properties };
-                    const fc = { type: 'FeatureCollection', features: [sliced] };
-                    const result = createSpatialDataset(`${layer.name}_sliced`, fc, { format: 'derived' });
-                    addResultLayer(result);
-                } catch (e) {
-                    showErrorToast(handleError(e, 'GISTools', 'LineSlice'));
-                }
-            });
-        }
-    });
 }
 
 // --- Line Intersect ---
@@ -2868,7 +2878,7 @@ async function openLineIntersect() {
 
     
         const rootId = `line-intersect-react-${Date.now()}`;
-        showModal('Line Intersect', `<div id="${rootId}"></div>`, {
+        openToolDialog('Line Intersect', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2914,7 +2924,7 @@ async function openKinks() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `kinks-react-${Date.now()}`;
-        showModal('Find Kinks (Self-Intersections)', `<div id="${rootId}"></div>`, {
+        openToolDialog('Find Kinks (Self-Intersections)', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2949,7 +2959,7 @@ async function openCombine() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `combine-features-react-${Date.now()}`;
-        showModal('Combine Features', `<div id="${rootId}"></div>`, {
+        openToolDialog('Combine Features', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -2984,7 +2994,7 @@ async function openUnion() {
     const polyCount = work.geojson.features.filter(f => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')).length;
     
         const rootId = `union-polygons-react-${Date.now()}`;
-        showModal('Union Polygons', `<div id="${rootId}"></div>`, {
+        openToolDialog('Union Polygons', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3010,6 +3020,78 @@ async function openUnion() {
         });
 }
 
+// --- Sample ---
+async function openSample() {
+    const layer = await requireSpatialLayer();
+    if (!layer) return;
+
+    const work = getWorkingFeatures(layer);
+
+    const rootId = `sample-react-${Date.now()}`;
+    openToolDialog('Random Sample', rootId, {
+        onMount: async (overlay, close) => {
+            const root = overlay.querySelector(`#${rootId}`);
+            if (!root) return;
+
+            const { mountSampleDialog } = await import('../../react/tools/mountSampleDialog.jsx');
+            const mounted = mountSampleDialog(root, {
+                selectionCount: mapService.getSelectionCount(layer.id),
+                totalCount: work.totalCount,
+                layerName: layer.name,
+                onCancel: () => close(),
+                onApply: async ({ num, applyTo }) => {
+                    close();
+                    try {
+                        const result = await gisTools.sampleFeatures(getWorkingDataset(layer, applyTo), num);
+                        addResultLayer(result);
+                        showToast(`Sampled ${result.geojson.features.length} feature(s)`, 'success');
+                    } catch (e) {
+                        showErrorToast(handleError(e, 'GISTools', 'Sample'));
+                    }
+                }
+            });
+            watchOverlayUnmount(overlay, () => mounted.unmount?.());
+        }
+    });
+}
+
+// --- Explode ---
+async function openExplode() {
+    const layer = await requireSpatialLayer();
+    if (!layer) return;
+
+    const work = getWorkingFeatures(layer);
+
+    const rootId = `explode-react-${Date.now()}`;
+    openToolDialog('Explode Vertices', rootId, {
+        onMount: async (overlay, close) => {
+            const root = overlay.querySelector(`#${rootId}`);
+            if (!root) return;
+
+            const { mountExplodeDialog } = await import('../../react/tools/mountExplodeDialog.jsx');
+            const mounted = mountExplodeDialog(root, {
+                selectionCount: mapService.getSelectionCount(layer.id),
+                totalCount: work.totalCount,
+                layerName: layer.name,
+                onCancel: () => close(),
+                onApply: async ({ applyTo }) => {
+                    close();
+                    try {
+                        const result = await runWithTaskProgress('Explode', () =>
+                            gisTools.explodeFeatures(getWorkingDataset(layer, applyTo))
+                        );
+                        addResultLayer(result);
+                        showToast(`Extracted ${result.geojson.features.length} point(s)`, 'success');
+                    } catch (e) {
+                        showErrorToast(handleError(e, 'GISTools', 'Explode'));
+                    }
+                }
+            });
+            watchOverlayUnmount(overlay, () => mounted.unmount?.());
+        }
+    });
+}
+
 // --- Dissolve ---
 async function openDissolve() {
     const layer = await requireSpatialLayer(['Polygon', 'MultiPolygon']);
@@ -3018,7 +3100,7 @@ async function openDissolve() {
     const work = getWorkingFeatures(layer);
     
         const rootId = `dissolve-react-${Date.now()}`;
-        showModal('Dissolve', `<div id="${rootId}"></div>`, {
+        openToolDialog('Dissolve', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3054,7 +3136,7 @@ async function openSector() {
     if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
     
         const rootId = `sector-react-${Date.now()}`;
-        showModal('Create Sector', `<div id="${rootId}"></div>`, {
+        openToolDialog('Create Sector', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3098,7 +3180,7 @@ async function openNearestPoint() {
 
     
         const rootId = `nearest-point-react-${Date.now()}`;
-        showModal('Nearest Point', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3129,10 +3211,6 @@ async function openNearestPoint() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-
-    const ptLayers = pointLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
 }
 
 // --- Nearest Point on Line ---
@@ -3152,7 +3230,7 @@ async function openNearestPointOnLine() {
 
     
         const rootId = `nearest-point-on-line-react-${Date.now()}`;
-        showModal('Nearest Point on Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point on Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3213,7 +3291,7 @@ async function openNearestPointToLine() {
 
     
         const rootId = `nearest-point-to-line-react-${Date.now()}`;
-        showModal('Nearest Point to Line', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Point to Line', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3255,7 +3333,7 @@ async function openNearestNeighborAnalysis() {
 
     
         const rootId = `nearest-neighbor-react-${Date.now()}`;
-        showModal('Nearest Neighbor Analysis', `<div id="${rootId}"></div>`, {
+        openToolDialog('Nearest Neighbor Analysis', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3271,13 +3349,18 @@ async function openNearestNeighborAnalysis() {
                             const pattern = p.zscore < -1.65 ? 'Clustered' : (p.zscore > 1.65 ? 'Dispersed' : 'Random');
                             const featureCount = p.numberOfPoints || layer.geojson.features.filter((f) => f.geometry?.type === 'Point').length;
                             const resultsRootId = `nearest-neighbor-results-react-${Date.now()}`;
-                            showModal('Nearest Neighbor Analysis ??? Results', `<div id="${resultsRootId}"></div>`, {
+                            openToolDialog('Nearest Neighbor Analysis — Results', resultsRootId, {
                                 width: '450px',
-                                onMount: async (resultsOverlay) => {
+                                onMount: async (resultsOverlay, close) => {
                                     const resultsRoot = resultsOverlay.querySelector(`#${resultsRootId}`);
                                     if (!resultsRoot) return;
                                     const { mountNearestNeighborResultsDialog } = await import('../../react/tools/mountNearestNeighborResultsDialog.jsx');
-                                    const resultsMounted = mountNearestNeighborResultsDialog(resultsRoot, { pattern, p, featureCount });
+                                    const resultsMounted = mountNearestNeighborResultsDialog(resultsRoot, {
+                                        pattern,
+                                        p,
+                                        featureCount,
+                                        onCancel: () => close()
+                                    });
                                     watchOverlayUnmount(resultsOverlay, () => resultsMounted.unmount?.());
                                 }
                             });
@@ -3289,70 +3372,6 @@ async function openNearestNeighborAnalysis() {
                 watchOverlayUnmount(overlay, () => mounted.unmount?.());
             }
         });
-}
-
-// --- Points Within Polygon ---
-async function openPointsWithinPolygon() {
-    if (typeof turf === 'undefined') return showToast('Turf.js not loaded yet', 'warning');
-    const pointLayerDefs = getLayers()
-        .filter((layer) =>
-            layer.type === 'spatial'
-            && layer.geojson.features.some((f) => f.geometry && f.geometry.type === 'Point'))
-        .map((layer) => ({
-            id: layer.id,
-            name: layer.name,
-            count: layer.geojson.features.length
-        }));
-    const polygonLayerDefs = getLayers()
-        .filter((layer) =>
-            layer.type === 'spatial'
-            && layer.geojson.features.some((f) =>
-                f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')))
-        .map((layer) => ({
-            id: layer.id,
-            name: layer.name,
-            count: layer.geojson.features.length
-        }));
-    if (pointLayerDefs.length === 0 || polygonLayerDefs.length === 0) return showToast('Need both a point layer and a polygon layer', 'warning');
-
-    
-        const rootId = `points-within-polygon-react-${Date.now()}`;
-        showModal('Points Within Polygon', `<div id="${rootId}"></div>`, {
-            onMount: async (overlay, close) => {
-                const root = overlay.querySelector(`#${rootId}`);
-                if (!root) return;
-
-                const { mountPointsWithinPolygonDialog } = await import('../../react/tools/mountPointsWithinPolygonDialog.jsx');
-                const mounted = mountPointsWithinPolygonDialog(root, {
-                    pointLayers: pointLayerDefs,
-                    polygonLayers: polygonLayerDefs,
-                    onCancel: () => close(),
-                    onFind: ({ pointLayerId, polygonLayerId }) => {
-                        const ptsLayer = getLayers().find((layer) => layer.id === pointLayerId);
-                        const polyLayer = getLayers().find((layer) => layer.id === polygonLayerId);
-                        close();
-                        if (!ptsLayer || !polyLayer) return;
-                        try {
-                            const result = gisTools.pointsWithinPolygon(ptsLayer, polyLayer);
-                            addResultLayer(result);
-                            const total = ptsLayer.geojson.features.length;
-                            const inside = result.geojson.features.length;
-                            showToast(`${inside} of ${total} points are within the polygon(s)`, 'success');
-                        } catch (e) {
-                            showErrorToast(handleError(e, 'GISTools', 'PointsWithinPolygon'));
-                        }
-                    }
-                });
-                watchOverlayUnmount(overlay, () => mounted.unmount?.());
-            }
-        });
-
-    const ptLayers = pointLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
-    const polyLayers = polygonLayerDefs
-        .map((layer) => `<option value="${layer.id}">${layer.name} (${layer.count})</option>`)
-        .join('');
 }
 
 // ============================
@@ -3377,13 +3396,12 @@ async function openCoordConverter() {
     const toFmtOpts = formats.map(f => `<option value="${f.id}" ${f.id === 'dms' ? 'selected' : ''}>${f.label}</option>`).join('');
     const fieldOpts = fields.map(f => `<option value="${f}">${f}</option>`).join('');
 
-    // Auto-detect lat/lon fields
-    const latGuess = fields.find(f => /^(lat|latitude|y)$/i.test(f)) || fields[0] || '';
-    const lonGuess = fields.find(f => /^(lon|lng|longitude|long|x)$/i.test(f)) || (fields[1] || '');
+    // Auto-detect lat/lon or northing/easting fields
+    const { latField: latGuess, lonField: lonGuess } = guessCoordinateFields(fields);
 
     
         const rootId = `coord-converter-react-${Date.now()}`;
-        showModal('Coordinate Converter', `<div id="${rootId}"></div>`, {
+        openToolDialog('Coordinate Converter', rootId, {
             onMount: async (overlay, close) => {
                 const root = overlay.querySelector(`#${rootId}`);
                 if (!root) return;
@@ -3992,7 +4010,7 @@ export async function doExport(format) {
 
     try {
         const layerStyle = mapService.getLayerStyle(layer.id);
-        if (layerStyle && isSmartStyleActive(layerStyle) && ['shapefile', 'csv', 'xlsx'].includes(format)) {
+        if (layerStyle && isSmartStyleActive(layerStyle) && ['shapefile', 'csv', 'xlsx', 'gpx'].includes(format)) {
             showToast('Smart styling is not included in this format. Use KML, KMZ, or GeoJSON for styled output.', 'info');
         }
 
@@ -4007,7 +4025,13 @@ export async function doExport(format) {
             exportOptions = { targetCrs: picked.targetCrs, sourceCrs: ds.schema?.crs };
         }
 
-        await exportDataset(ds, format, exportOptions);
+        let exportFormat = format;
+        if (isCoverageRasterLayer(ds) && format === 'kmz') {
+            exportFormat = 'coverage-kmz';
+            showToast('Exporting coverage as KMZ image overlay.', 'info');
+        }
+
+        await exportDataset(ds, exportFormat, exportOptions);
     } catch (e) {
         showErrorToast(handleError(e, 'Export', format));
     }
@@ -4629,13 +4653,14 @@ const APP_ACTIONS = {
     openKinks,
     openCombine,
     openUnion,
+    openSample,
+    openExplode,
     openDissolve,
     openSector,
     openNearestPoint,
     openNearestPointOnLine,
     openNearestPointToLine,
     openNearestNeighborAnalysis,
-    openPointsWithinPolygon,
     openPhotoMapper: openPhotoMapper,
     openArcGISImporter: openArcGISImporter,
     startImportFence,
@@ -4759,20 +4784,31 @@ export function setupLogsPanel() {
             portal.style.top = top + 'px';
         }
 
+        function hideImmediate() {
+            clearTimeout(hideTimeout);
+            portal.classList.remove('visible');
+            activeBtn = null;
+        }
+
         function hide() {
-            hideTimeout = setTimeout(() => {
-                portal.classList.remove('visible');
-                activeBtn = null;
-            }, 100);
+            hideTimeout = setTimeout(hideImmediate, 100);
         }
 
         document.addEventListener('pointerenter', (e) => {
             const btn = closestFromEvent(e, '.geo-tool-btn');
-            if (btn) show(btn);
+            if (btn) {
+                show(btn);
+            } else if (activeBtn) {
+                hideImmediate();
+            }
         }, true);
         document.addEventListener('pointerleave', (e) => {
             const btn = closestFromEvent(e, '.geo-tool-btn');
             if (btn && btn === activeBtn) hide();
+        }, true);
+        document.addEventListener('pointerdown', (e) => {
+            const btn = closestFromEvent(e, '.geo-tool-btn');
+            if (btn && btn === activeBtn) hideImmediate();
         }, true);
     })();
 }

@@ -4,6 +4,7 @@
 import { loadToGeoJSON, loadJSZip, loadShpjs } from '../core/libs.js';
 import { parseGeoJSONText } from './parsers/parse-geojson.js';
 import { parseKmlText } from './parsers/parse-kml.js';
+import { parseGpxText } from './parsers/parse-gpx.js';
 import { extractKmlFromKmzBuffer } from './parsers/parse-kmz-buffer.js';
 import { parseShapefileBuffer } from './parsers/parse-shapefile-buffer.js';
 import { parseInWorker, cancelWorkerParse, supportsWorkers } from './import-worker-pool.js';
@@ -24,6 +25,22 @@ export async function parseGeoJSONForImport(text, byteSize = 0) {
         }
     }
     return parseGeoJSONText(text);
+}
+
+export async function parseGpxForImport(text, byteSize = 0) {
+    if (shouldUseWorker(byteSize)) {
+        try {
+            const result = await parseInWorker('gpx', text);
+            if (result) return result;
+        } catch (e) {
+            if (e?.cancelled) throw e;
+        }
+    }
+    const toGeoJsonLib = await loadToGeoJSON();
+    return parseGpxText(text, {
+        DOMParserImpl: typeof DOMParser !== 'undefined' ? DOMParser : (await import('@xmldom/xmldom')).DOMParser,
+        toGeoJsonLib
+    });
 }
 
 export async function parseKmlForImport(text, byteSize = 0) {
@@ -87,6 +104,7 @@ export { cancelWorkerParse, supportsWorkers };
 
 export default {
     parseGeoJSONForImport,
+    parseGpxForImport,
     parseKmlForImport,
     parseKmzForImport,
     parseShapefileForImport,

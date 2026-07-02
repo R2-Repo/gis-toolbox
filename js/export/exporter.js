@@ -3,14 +3,21 @@
  */
 import logger from '../core/logger.js';
 import { getSelectedFields, applyFieldSelection, isWorkspaceLayer } from '../core/data-model.js';
+import { isCoverageRasterLayer } from '../core/coverage-raster-layer.js';
 import { TaskRunner } from '../core/task-runner.js';
 import { exportGeoJSON } from './geojson-exporter.js';
 import { exportCSV } from './csv-exporter.js';
 import { exportExcel } from './excel-exporter.js';
 import { exportKML, exportMultiLayerKML } from './kml-exporter.js';
+import { exportGPX } from './gpx-exporter.js';
 import { exportKMZ, exportMultiLayerKMZ } from './kmz-exporter.js';
 import { exportJSON } from './json-exporter.js';
 import { exportShapefile } from './shapefile-exporter.js';
+import {
+    exportCoverageKMZ,
+    exportCoverageRasterZip,
+    exportMixedCoverageMultiLayerKMZ
+} from './coverage-raster-exporter.js';
 
 // Optional map API adapter for style lookup (mapService).
 let _mapApi = null;
@@ -22,9 +29,14 @@ const EXPORTERS = {
     csv: { fn: exportCSV, label: 'CSV', ext: '.csv', spatial: false },
     xlsx: { fn: exportExcel, label: 'Excel (.xlsx)', ext: '.xlsx', spatial: false },
     kml: { fn: exportKML, label: 'KML', ext: '.kml', spatial: true },
+    gpx: { fn: exportGPX, label: 'GPX', ext: '.gpx', spatial: true },
     kmz: { fn: exportKMZ, label: 'KMZ', ext: '.kmz', spatial: true },
-    shapefile: { fn: exportShapefile, label: 'Shapefile (.shp)', ext: '.zip', spatial: true }
+    shapefile: { fn: exportShapefile, label: 'Shapefile (.shp)', ext: '.zip', spatial: true },
+    'coverage-kmz': { fn: exportCoverageKMZ, label: 'KMZ (Coverage Overlay)', ext: '.kmz', spatial: true, coverageOnly: true },
+    'coverage-raster': { fn: exportCoverageRasterZip, label: 'Georeferenced PNG (.zip)', ext: '.zip', spatial: true, coverageOnly: true }
 };
+
+const COVERAGE_RASTER_HIDDEN_FORMATS = new Set(['kml', 'kmz', 'gpx', 'shapefile', 'csv', 'xlsx']);
 
 /**
  * Get available export formats for a dataset
@@ -32,14 +44,16 @@ const EXPORTERS = {
 export function getAvailableFormats(dataset) {
     const isSpatial = (dataset.type === 'spatial' || dataset.type === 'spatial-chunked' || dataset.storage === 'workspace')
         && dataset.schema?.geometryType;
+    const coverageRaster = isCoverageRasterLayer(dataset);
     const formats = [];
 
     for (const [key, exp] of Object.entries(EXPORTERS)) {
-        if (exp.spatial && !isSpatial) continue; // Skip spatial-only for tables
+        if (exp.coverageOnly && !coverageRaster) continue;
+        if (coverageRaster && COVERAGE_RASTER_HIDDEN_FORMATS.has(key)) continue;
+        if (exp.spatial && !isSpatial) continue;
         formats.push({ key, label: exp.label, ext: exp.ext });
     }
 
-    // CSV, JSON, Excel always available
     return formats;
 }
 
@@ -165,7 +179,16 @@ export async function exportMultiLayerKMZFile(layers, options = {}) {
     const task = new TaskRunner('Export Multi-Layer KMZ', 'Exporter');
     return task.run(async (t) => {
         t.updateProgress(10, 'Preparing layers...');
-        const result = await exportMultiLayerKMZ(layers, options, t);
+
+        const coverageLayers = layers.filter(({ dataset }) => isCoverageRasterLayer(dataset));
+        const vectorLayers = layers.filter(({ dataset }) => !isCoverageRasterLayer(dataset));
+
+        let result;
+        if (coverageLayers.length) {
+            result = await exportMixedCoverageMultiLayerKMZ(coverageLayers, vectorLayers, options, t);
+        } else {
+            result = await exportMultiLayerKMZ(layers, options, t);
+        }
 
         logger.info('Exporter', 'Multi-layer KMZ export complete', {
             layers: layers.length, size: result.blob?.size

@@ -30,6 +30,18 @@ export function sniffPropertyKeysFromGeoJsonText(text) {
  * @param {string} head
  * @returns {string[]}
  */
+export function sniffGpxFieldNames(head) {
+    const keys = new Set(['name', 'desc', 'time', 'cmt', 'sym', 'type']);
+    for (const tag of ['name', 'desc', 'time', 'cmt', 'sym', 'type']) {
+        if (new RegExp(`<${tag}[\\s/>]`, 'i').test(head)) keys.add(tag);
+    }
+    return [...keys].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * @param {string} head
+ * @returns {string[]}
+ */
 export function sniffKmlFieldNames(head) {
     const keys = new Set();
     for (const m of head.matchAll(/<(?:SimpleData|Data)\s+name="([^"]+)"/gi)) {
@@ -93,7 +105,7 @@ export async function sniffFieldsFromFile(file) {
         return [];
     }
 
-    if (['geojson', 'json', 'csv', 'tsv', 'txt', 'kml', 'xml'].includes(format)) {
+    if (['geojson', 'json', 'csv', 'tsv', 'txt', 'kml', 'gpx', 'xml'].includes(format)) {
         let head;
         try {
             head = await file.slice(0, Math.min(file.size, SAMPLE_BYTES)).text();
@@ -107,6 +119,9 @@ export async function sniffFieldsFromFile(file) {
         if (format === 'kml' || format === 'xml') {
             const kml = sniffKmlFieldNames(head);
             if (kml.length) return kml;
+        }
+        if (format === 'gpx') {
+            return sniffGpxFieldNames(head);
         }
         if (format === 'geojson' || format === 'json') {
             try {
@@ -153,5 +168,6 @@ export default {
     sniffFieldsFromFile,
     sniffPropertyKeysFromGeoJsonText,
     sniffKmlFieldNames,
+    sniffGpxFieldNames,
     sniffCsvFieldNames
 };

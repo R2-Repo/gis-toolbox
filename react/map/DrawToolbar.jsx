@@ -40,6 +40,18 @@ const DRAW_TOOLS = [
         title: 'Draw sector (pie wedge)',
         label: 'Sector',
         icon: <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 8L14 8A6 6 0 0 0 8 2Z" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.3" /></svg>
+    },
+    {
+        tool: 'text',
+        title: 'Place text label',
+        label: 'Text',
+        icon: <svg width="16" height="16" viewBox="0 0 16 16"><text x="2" y="12" fontSize="11" fontWeight="700" fill="currentColor">T</text></svg>
+    },
+    {
+        tool: 'callout',
+        title: 'Callout with leader line',
+        label: 'Callout',
+        icon: <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="3" cy="13" r="2" fill="currentColor" /><path d="M5 11 L14 3" stroke="currentColor" strokeWidth="1.5" fill="none" /><text x="9" y="5" fontSize="7" fontWeight="700" fill="currentColor">A</text></svg>
     }
 ];
 
@@ -50,10 +62,12 @@ export function DrawToolbar({
     showFinish = false,
     showUndo = false,
     showDelete = false,
+    showEdit = false,
     onClose,
     onToggleTool,
     onUndo,
     onDelete,
+    onEdit,
     onFinish
 }) {
     const stopPropagation = (event) => event.stopPropagation();
@@ -99,6 +113,14 @@ export function DrawToolbar({
                     onClick={() => onDelete?.()}
                 >
                     🗑 Delete
+                </button>
+                <button
+                    className="draw-action-btn draw-edit-btn"
+                    style={{ display: showEdit ? '' : 'none' }}
+                    title="Edit label text and style"
+                    onClick={() => onEdit?.()}
+                >
+                    ✎ Edit
                 </button>
             </div>
             <div className="draw-toolbar-hint">{hint}</div>

@@ -134,8 +134,8 @@ function SpatialJoinInspector({ node, config, onConfigChange, engine, getLayers 
             <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
                 For each <strong>Point</strong>, finds the containing <strong>Polygon</strong>
                 {' '}and copies its attributes to the point. Creates a new layer on the output port
-                (does not modify source layers). Map <strong>Points in Poly (filter)</strong> only
-                keeps matching points without joining attributes.
+                (does not modify source layers). Use <strong>Find Features in Area</strong> (GIS Widgets)
+                to filter points inside polygons without joining attributes.
             </p>
             <InspectorLabel>Fields to Join</InspectorLabel>
             <InspectorInput
@@ -284,20 +284,58 @@ function SplitByGeometryInspector() {
 function ReprojectInspector({ config, onConfigChange }) {
     return (
         <>
-            <InspectorLabel>Source CRS (optional)</InspectorLabel>
-            <CrsPicker
-                label=""
-                value={config.fromCrs || 'EPSG:4326'}
-                onChange={(fromCrs) => onConfigChange({ ...config, fromCrs })}
-            />
-            <InspectorLabel style={{ marginTop: 8 }}>Target CRS</InspectorLabel>
-            <CrsPicker
-                label=""
-                value={config.toCrs || 'EPSG:4326'}
-                onChange={(toCrs) => onConfigChange({ ...config, toCrs })}
-            />
-            <HintText>Leave source empty to use the input layer CRS.</HintText>
+            <InfoText>
+                Reprojects geometries to WGS 84 for map display by default. Expand Advanced to choose
+                a different source or target.
+            </InfoText>
+            <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                    Advanced options
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                    <InspectorLabel>Source CRS</InspectorLabel>
+                    <CrsPicker
+                        label=""
+                        value={config.fromCrs || 'EPSG:4326'}
+                        onChange={(fromCrs) => onConfigChange({ ...config, fromCrs })}
+                        variant="compact"
+                    />
+                    <InspectorLabel style={{ marginTop: 8 }}>Target CRS</InspectorLabel>
+                    <CrsPicker
+                        label=""
+                        value={config.toCrs || 'EPSG:4326'}
+                        onChange={(toCrs) => onConfigChange({ ...config, toCrs })}
+                        variant="compact"
+                    />
+                    <HintText>Source defaults to the input layer CRS if unchanged.</HintText>
+                </div>
+            </details>
         </>
+    );
+}
+
+function SampleInspector({ config, onConfigChange }) {
+    return (
+        <>
+            <InfoText>Randomly selects features from the input layer without replacement.</InfoText>
+            <InspectorLabel style={{ marginTop: 8 }}>Number of features</InspectorLabel>
+            <InspectorInput
+                type="number"
+                value={config.num ?? 10}
+                min={1}
+                step={1}
+                onChange={(v) => onConfigChange({ ...config, num: parseInt(v, 10) || 1 })}
+            />
+            <HintText>If the layer has fewer features, all features are returned.</HintText>
+        </>
+    );
+}
+
+function ExplodeInspector() {
+    return (
+        <InfoText>
+            Extracts every coordinate vertex as a point feature. Parent feature attributes are copied to each point.
+        </InfoText>
     );
 }
 
@@ -316,5 +354,7 @@ export const SPATIAL_INSPECTORS = {
     'merge-layers': MergeLayersInspector,
     difference: DifferenceInspector,
     'summarize-within': SummarizeWithinInspector,
-    'split-by-geometry': SplitByGeometryInspector
+    'split-by-geometry': SplitByGeometryInspector,
+    sample: SampleInspector,
+    explode: ExplodeInspector
 };

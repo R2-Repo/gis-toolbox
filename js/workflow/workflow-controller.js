@@ -24,10 +24,74 @@ export function createWorkflowController(deps) {
     const engine = new WorkflowEngine();
     let engineLoaded = false;
     let open = false;
+    let openGeneration = 0;
+    let openPromise = null;
     let rootEl = null;
     let reactUnmount = null;
     let previewApi = null;
     let saveTimer = null;
+
+    const isOpening = () => openPromise != null;
+
+    const getOverlayEl = () => rootEl?.querySelector('#wf-overlay') ?? rootEl?.firstElementChild ?? null;
+
+    const isOverlayVisible = () => getOverlayEl()?.classList.contains('visible') ?? false;
+
+    const waitForOverlayEl = (timeoutMs = 5000) => new Promise((resolve, reject) => {
+        const started = performance.now();
+        const tick = () => {
+            const el = getOverlayEl();
+            if (el?.classList?.contains('wf-overlay')) {
+                resolve(el);
+                return;
+            }
+            if (performance.now() - started > timeoutMs) {
+                reject(new Error('Workflow overlay mount timeout'));
+                return;
+            }
+            requestAnimationFrame(tick);
+        };
+        tick();
+    });
+
+    const setOverlayVisible = (visible) => {
+        const overlay = getOverlayEl();
+        if (!overlay) return;
+        overlay.classList.toggle('visible', visible);
+        if (visible) rootEl?.removeAttribute('inert');
+        else rootEl?.setAttribute('inert', '');
+    };
+
+    let mountPromise = null;
+
+    const ensureMounted = async () => {
+        if (rootEl && getOverlayEl()) return;
+        if (mountPromise) return mountPromise;
+
+        mountPromise = (async () => {
+            if (!rootEl) {
+                rootEl = document.createElement('div');
+                rootEl.id = 'wf-overlay-root';
+                document.body.appendChild(rootEl);
+            }
+
+            if (!getOverlayEl()) {
+                const mod = await import('../../react/workflow/mountWorkflowOverlay.jsx');
+                reactUnmount = mod.mountWorkflowOverlay(rootEl, {
+                    controller,
+                    getLayers,
+                    importFile
+                });
+                await waitForOverlayEl();
+            }
+        })();
+
+        try {
+            await mountPromise;
+        } finally {
+            mountPromise = null;
+        }
+    };
 
     const emitEngineChanged = () => bus.emit('workflow:engine-changed');
 
@@ -214,50 +278,66 @@ export function createWorkflowController(deps) {
         },
 
         async open() {
-            if (open) return;
-            open = true;
+            if (isOverlayVisible()) return;
+            if (openPromise) return openPromise;
 
-            if (!rootEl) {
-                rootEl = document.createElement('div');
-                rootEl.id = 'wf-overlay-root';
-                document.body.appendChild(rootEl);
+            const generation = ++openGeneration;
+            openPromise = (async () => {
+                try {
+                    await ensureMounted();
+                    if (generation !== openGeneration) return;
 
-                const mod = await import('../../react/workflow/mountWorkflowOverlay.jsx');
-                reactUnmount = mod.mountWorkflowOverlay(rootEl, {
-                    controller,
-                    getLayers,
-                    importFile
-                });
-            }
+                    if (!engineLoaded) {
+                        const loadResult = WorkflowStore.load(engine);
+                        await WorkflowStore.restoreNodeData(engine);
+                        if (generation !== openGeneration) return;
 
-            rootEl.removeAttribute('inert');
-            rootEl.firstElementChild?.classList.add('visible');
+                        engineLoaded = true;
+                        if (loadResult?.skipped?.length) {
+                            const types = [...new Set(loadResult.skipped)].join(', ');
+                            showToast(`Restored pipeline; skipped unknown node type(s): ${types}`, 'warn');
+                        }
+                    }
 
-            if (!engineLoaded) {
-                const loadResult = WorkflowStore.load(engine);
-                await WorkflowStore.restoreNodeData(engine);
-                engineLoaded = true;
-                if (loadResult?.skipped?.length) {
-                    const types = [...new Set(loadResult.skipped)].join(', ');
-                    showToast(`Restored pipeline; skipped unknown node type(s): ${types}`, 'warn');
+                    if (generation !== openGeneration) return;
+
+                    setOverlayVisible(true);
+                    refreshCanvasViews({ center: true });
+                    open = true;
+                    bus.emit('workflow:opened');
+                } catch (err) {
+                    console.error('[Workflow] open failed', err);
+                    setOverlayVisible(false);
+                    open = false;
+                    showToast('Could not open the pipeline editor.', 'error');
+                } finally {
+                    openPromise = null;
                 }
-            }
-            refreshCanvasViews({ center: true });
-            bus.emit('workflow:opened');
+            })();
+
+            return openPromise;
         },
 
         close() {
-            if (!open) return;
+            const wasOpen = open || isOverlayVisible();
+            const wasOpening = isOpening();
+            if (!wasOpen && !wasOpening) return;
+
+            openGeneration++;
+            openPromise = null;
             WorkflowStore.save(engine);
-            rootEl?.firstElementChild?.classList.remove('visible');
-            rootEl?.setAttribute('inert', '');
+            setOverlayVisible(false);
             open = false;
             bus.emit('workflow:closed');
         },
 
         toggle() {
-            if (open) controller.close();
+            if (isOverlayVisible()) controller.close();
             else void controller.open();
+        },
+
+        warmup() {
+            void ensureMounted();
         },
 
         destroy() {

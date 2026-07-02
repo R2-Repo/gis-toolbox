@@ -161,7 +161,7 @@ export async function applyFiltersAsync(features, rules, logic = 'AND', task = n
     return features.filter((_, i) => flags[i]);
 }
 
-function evaluateRule(props, rule) {
+export function evaluateRule(props, rule) {
     const val = props[rule.field];
     const target = rule.value;
 

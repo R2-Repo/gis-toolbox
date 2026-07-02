@@ -1,4 +1,12 @@
 import { useMemo, useState } from 'react';
+import { classifyCoordinateField } from '../../js/import/coord-detect.js';
+
+const COORD_ROLE_LABELS = {
+    latitude: 'Lat',
+    longitude: 'Lon',
+    northing: 'Northing',
+    easting: 'Easting'
+};
 
 /**
  * Checkbox list for pre-import attribute selection.
@@ -68,7 +76,9 @@ export function ImportFieldSelector({ fields = [], selected = [], onChange, hint
                     padding: '6px 8px'
                 }}
             >
-                {filtered.map((name) => (
+                {filtered.map((name) => {
+                    const coordRole = classifyCoordinateField(name);
+                    return (
                     <label
                         key={name}
                         className="field-item"
@@ -80,8 +90,24 @@ export function ImportFieldSelector({ fields = [], selected = [], onChange, hint
                             onChange={(e) => toggle(name, e.target.checked)}
                         />
                         <span className="field-name">{name}</span>
+                        {coordRole ? (
+                            <span
+                                className="text-xs text-muted"
+                                style={{
+                                    marginLeft: 'auto',
+                                    padding: '1px 6px',
+                                    borderRadius: 4,
+                                    border: '1px solid var(--border)',
+                                    whiteSpace: 'nowrap'
+                                }}
+                                title="Recognized coordinate column"
+                            >
+                                {COORD_ROLE_LABELS[coordRole]}
+                            </span>
+                        ) : null}
                     </label>
-                ))}
+                    );
+                })}
                 {filtered.length === 0 ? (
                     <div className="text-xs text-muted">No fields match your search.</div>
                 ) : null}

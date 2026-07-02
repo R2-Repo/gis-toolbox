@@ -214,6 +214,21 @@ export function LabelsSection({ layer, style: externalStyle, defaultColor = '#25
                                 />
                             </div>
                             <div className="style-row">
+                                <label>Max zoom</label>
+                                <input
+                                    type="number"
+                                    className="smart-style-num-input"
+                                    min="0"
+                                    max="22"
+                                    step="1"
+                                    value={labels.maxZoom ?? DEFAULT_LAYER_LABELS.maxZoom}
+                                    onChange={(e) => setLabels({ maxZoom: parseInt(e.target.value, 10) || 0 })}
+                                />
+                            </div>
+                            <p className="text-muted text-xs mb-8">
+                                Labels show within this zoom window. Layer Visibility Range can further restrict when labels appear.
+                            </p>
+                            <div className="style-row">
                                 <label>Halo</label>
                                 <input
                                     type="color"
